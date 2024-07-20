@@ -4,7 +4,19 @@ import os
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
+logger.setLevel(log_level)
+
+print(f"Log level: {log_level}")
+
+logger.critical("hello critical")
+logger.error("hello error")
+logger.warning("hello warning")
+logger.info("hello info")
+logger.debug("hello debug")
+
 
 slack_token = os.environ['SLACK_BOT_TOKEN']
 client = WebClient(token=slack_token)
@@ -40,3 +52,10 @@ def lambda_handler(event, context):
         }
 
     return ret
+
+
+if __name__ == "__main__":
+    event = {
+        'body': '{"event": {"type": "message", "channel": "C01U6N4QK3E", "user": "U01U6N4QK3F"}}'
+    }
+    lambda_handler(event, None)
