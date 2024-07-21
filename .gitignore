@@ -19,6 +19,7 @@ build/
 
 # Deployment package
 function.zip
+lambda_package/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

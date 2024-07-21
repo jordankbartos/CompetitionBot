@@ -4,7 +4,11 @@ import os
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
+logger.setLevel(log_level)
+
 
 slack_token = os.environ['SLACK_BOT_TOKEN']
 client = WebClient(token=slack_token)
@@ -17,21 +21,30 @@ def lambda_handler(event, context):
 
     try:
         body = json.loads(event['body'])
-        if 'event' in body:
+        if 'challenge' in body:
+            ret = {
+                'statusCode': 200,
+                'body': json.dumps(body['challenge'])
+            }
+        elif 'event' in body:
+
             event_data = body['event']
+
             if event_data['type'] == 'message' and 'subtype' not in event_data:
+
                 response = client.chat_postMessage(
                     channel=event_data['channel'],
                     text=f"Hello, <@{event_data['user']}>! How can I assist you today?"
                 )
+
                 if response['ok']:
                     logger.info('Message sent successfully')
                 else:
                     logger.error('Failed to send message')
-        ret = {
-            'statusCode': 200,
-            'body': json.dumps('Success')
-        }
+            ret = {
+                'statusCode': 200,
+                'body': json.dumps('Success')
+            }
     except SlackApiError as e:
         logger.exception(f"Error: {e.response['error']}")
         ret = {
@@ -39,4 +52,5 @@ def lambda_handler(event, context):
             'body': json.dumps('Error')
         }
 
+    logger.info(f"Response: {ret}")
     return ret
