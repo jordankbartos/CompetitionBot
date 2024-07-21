@@ -2,6 +2,21 @@ provider "aws" {
   region = "us-east-1" # or your preferred region
 }
 
+data "aws_secretsmanager_secret" "slack_bot_token" {
+  name = "slack_bot_token"
+}
+
+data "aws_secretsmanager_secret_version" "slack_bot_token" {
+  secret_id = data.aws_secretsmanager_secret.slack_bot_token.id
+}
+
+# variable "slack_bot_token" {
+#   description = "Slack bot token"
+#   type        = string
+#   sensitive   = true
+#   default     = data.aws_secretsmanager_secret_version.slack_bot_token.secret_string
+# }
+
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
   assume_role_policy = jsonencode({
@@ -32,7 +47,7 @@ resource "aws_lambda_function" "slackbot" {
 
   environment {
     variables = {
-      SLACK_BOT_TOKEN = var.slack_bot_token
+      SLACK_BOT_TOKEN = data.aws_secretsmanager_secret_version.slack_bot_token.secret_string
     }
   }
 }
@@ -75,9 +90,4 @@ resource "aws_api_gateway_deployment" "slackbot_deployment" {
   depends_on  = [aws_api_gateway_integration.lambda_integration]
   rest_api_id = aws_api_gateway_rest_api.slackbot_api.id
   stage_name  = "prod"
-}
-
-variable "slack_bot_token" {
-  description = "Slack bot token"
-  type        = string
 }
