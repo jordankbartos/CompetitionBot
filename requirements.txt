@@ -1,1 +1,2 @@
 slack_sdk==3.31.0
+openai==1.36.1

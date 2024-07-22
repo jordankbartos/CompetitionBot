@@ -3,6 +3,7 @@ import logging
 import os
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from openai import OpenAI
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=log_level)
@@ -30,11 +31,22 @@ def lambda_handler(event, context):
 
             event_data = body['event']
 
-            if event_data['type'] == 'message' and 'subtype' not in event_data:
+            if event_data['type'] == 'app_mention' and 'subtype' not in event_data:
+
+                client = OpenAI()
+                completion = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an evil workout robot, motivating people to exercise through intimidation and fear."},
+                        {"role": "user", "content": "Compose a message that informs somebody you don't know what they want, but they should be working out instead of asking you pointless questions."}
+                    ]
+                )
+
+                text=f"Hey, <@{event_data['user']}>. {completion.choices[0].message}"
 
                 response = client.chat_postMessage(
                     channel=event_data['channel'],
-                    text=f"Hello, <@{event_data['user']}>! How can I assist you today?"
+                    text=text,
                 )
 
                 if response['ok']:
@@ -54,3 +66,5 @@ def lambda_handler(event, context):
 
     logger.info(f"Response: {ret}")
     return ret
+
+    
