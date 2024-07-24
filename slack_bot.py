@@ -33,16 +33,31 @@ def lambda_handler(event, context):
 
             if event_data['type'] == 'app_mention' and 'subtype' not in event_data:
 
-                client = OpenAI()
-                completion = client.chat.completions.create(
+                ai_client = OpenAI()
+
+                completion = ai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are an evil workout robot, motivating people to exercise through intimidation and fear."},
-                        {"role": "user", "content": "Compose a message that informs somebody you don't know what they want, but they should be working out instead of asking you pointless questions."}
-                    ]
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an evil and possessed robot hell-bent on making everyone as strong and as fit "
+                                "as possible. You motivate people to exercise through intimidation, fear, and threats. "
+                                "Keep your responses short and to the point. Try not to exceed 140 characters."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                "Compose a message that informs somebody that you can't help them with their request. "
+                                f"Their request: {event_data['text']}"
+                            )
+                        },
+                    ],
+                    temperature=1.0,
                 )
 
-                text=f"Hey, <@{event_data['user']}>. {completion.choices[0].message}"
+                text=f"<@{event_data['user']}> {completion.choices[0].message.content}"
 
                 response = client.chat_postMessage(
                     channel=event_data['channel'],
