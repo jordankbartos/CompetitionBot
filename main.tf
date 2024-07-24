@@ -268,6 +268,30 @@ resource "aws_iam_role_policy_attachment" "lambda_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+
+
+############# EventBridge Rule ##############################
+resource "aws_cloudwatch_event_rule" "daily_trigger" {
+  name                = "daily-slackbot-trigger"
+  description         = "Trigger the slackbot lambda every day at 3:00 PM"
+  schedule_expression = "cron(*/2 * * * ? *)"
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.slackbot.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.daily_trigger.arn
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  rule      = aws_cloudwatch_event_rule.daily_trigger.name
+  target_id = "slackbot_lambda"
+  arn       = aws_lambda_function.slackbot.arn
+}
+
+########################## lambda ############################
 resource "aws_lambda_function" "slackbot" {
   filename         = "function.zip"
   function_name    = "slackbot"
@@ -329,3 +353,4 @@ resource "aws_api_gateway_deployment" "slackbot_deployment" {
   rest_api_id = aws_api_gateway_rest_api.slackbot_api.id
   stage_name  = "prod"
 }
+
