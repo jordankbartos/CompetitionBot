@@ -14,7 +14,7 @@ rm -rf $PACKAGE_DIR $ZIP_FILE
 mkdir -p $PACKAGE_DIR
 
 # Copy the Python script to the package directory
-cp slack_bot.py $PACKAGE_DIR/
+cp *.py $PACKAGE_DIR/
 
 # Install dependencies into the package directory
 pip install --target $PACKAGE_DIR -r requirements.txt

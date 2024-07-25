@@ -2,6 +2,8 @@ provider "aws" {
   region = "us-east-1" # or your preferred region
 }
 
+data "aws_caller_identity" "current" {}
+
 ################# Secrets Manager ###########################
 data "aws_secretsmanager_secret" "slack_bot_token" {
   name = "slack_bot_token"
@@ -263,30 +265,57 @@ resource "aws_iam_role" "lambda_exec" {
   })
 }
 
+resource "aws_iam_policy" "lambda_policy" {
+  name        = "lambda_policy"
+  description = "Allow lambda to write logs to CloudWatch"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:DeleteRule",
+        "events:ListTargetsByRule",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:GetPolicy",
+      ],
+      Effect   = "Allow",
+      Resource = "*"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "lambda_policy" {
   role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
 
 
 ############# EventBridge Rule ##############################
-resource "aws_cloudwatch_event_rule" "daily_trigger" {
-  name                = "daily-slackbot-trigger"
-  description         = "Trigger the slackbot lambda every day at 3:00 PM"
-  schedule_expression = "cron(*/2 * * * ? *)"
+resource "aws_cloudwatch_event_rule" "eb_trigger" {
+  name                = "eb-slackbot-trigger"
+  description         = "Trigger the slackbot lambda"
+  schedule_expression = "cron(*/3 * * * ? *)"
+  # schedule_expression = "cron(0 0 */4 * ? *)"
+  state = "ENABLED"
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
-  statement_id  = "AllowEventBridgeInvoke"
+  statement_id  = "eb-slackbot-trigger-permission"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.slackbot.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.daily_trigger.arn
+  source_arn    = aws_cloudwatch_event_rule.eb_trigger.arn
 }
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.daily_trigger.name
+  rule      = aws_cloudwatch_event_rule.eb_trigger.name
   target_id = "slackbot_lambda"
   arn       = aws_lambda_function.slackbot.arn
 }
@@ -299,6 +328,7 @@ resource "aws_lambda_function" "slackbot" {
   handler          = "slack_bot.lambda_handler"
   runtime          = "python3.11"
   source_code_hash = filebase64sha256("function.zip")
+  timeout          = 30 # seconds
 
   environment {
     variables = {
@@ -308,6 +338,8 @@ resource "aws_lambda_function" "slackbot" {
       DB_USERNAME     = data.aws_secretsmanager_secret_version.db_username.secret_string
       DB_PASSWORD     = data.aws_secretsmanager_secret_version.db_password.secret_string
       OPENAI_API_KEY  = data.aws_secretsmanager_secret_version.OPENAI_API_KEY.secret_string
+      AWS_ACCOUNT_ID  = data.aws_caller_identity.current.account_id
+      LOG_LEVEL       = "INFO"
     }
   }
 }
