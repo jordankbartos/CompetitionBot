@@ -1,0 +1,44 @@
+{
+  "name": "Competition Bot AWS Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "args": {
+      "VARIANT": "3.11"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "hashicorp.terraform",
+        "redhat.vscode-yaml",
+        "github.copilot",
+        "sdras.night-owl",
+        "vscodevim.vim",
+        "ms-python.python",
+        "ms-python.debugpy",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.pythonPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.autopep8Path": "/usr/local/bin/autopep8",
+        "python.formatting.blackPath": "/usr/local/bin/black",
+        "editor.formatOnSave": true,
+        "workbench.colorTheme": "Night Owl"
+      }
+    }
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.aws,target=/home/vscode/.aws,type=bind,consistency=cached"
+  ],
+  "runArgs": [
+    "--init"
+  ]
+}
