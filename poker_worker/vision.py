@@ -4,6 +4,7 @@ import base64
 import logging
 import google.generativeai as genai
 from config import VISION_PROMPT
+from utils import get_env
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,6 @@ def download_slack_image(url, token):
         return None
 
 def process_poker_screenshot(image_content):
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
     model = genai.GenerativeModel("gemini-2.5-flash")
     
     try:

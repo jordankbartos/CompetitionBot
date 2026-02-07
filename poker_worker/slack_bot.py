@@ -12,13 +12,19 @@ from vision import download_slack_image, process_poker_screenshot
 from settlement import calculate_settlements, generate_venmo_link
 from config import SYSTEM_PROMPT, VISION_PROMPT
 from event_bridge_trigger import handle_event_bridge_trigger
+from utils import get_env
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
 logger.setLevel(log_level)
 
-slack_token = os.environ['SLACK_BOT_TOKEN']
+# Configure Gemini once at startup
+google_api_key = get_env("GOOGLE_API_KEY")
+if google_api_key:
+    genai.configure(api_key=google_api_key)
+
+slack_token = get_env('SLACK_BOT_TOKEN')
 client = WebClient(token=slack_token)
 db = PokerDatabase()
 
@@ -171,7 +177,6 @@ def handle_settlement(event_data, channel):
         client.chat_postMessage(channel=channel, text="I ran into an error calculating the settlements. Check the logs!")
 
 def handle_conversation(event_data, channel):
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
     model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
     
     response = model.generate_content(event_data.get('text', ''))

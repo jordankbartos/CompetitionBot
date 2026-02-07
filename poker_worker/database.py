@@ -6,7 +6,8 @@ logger = logging.getLogger(__name__)
 
 class PokerDatabase:
     def __init__(self):
-        self.dynamodb = boto3.resource("dynamodb")
+        endpoint_url = os.environ.get("DYNAMODB_URL")
+        self.dynamodb = boto3.resource("dynamodb", endpoint_url=endpoint_url)
         self.table_name = os.environ["DYNAMODB_TABLE"]
         self.table = self.dynamodb.Table(self.table_name)
 

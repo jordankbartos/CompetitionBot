@@ -1,0 +1,52 @@
+services:
+  dynamodb-local:
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
+    image: "amazon/dynamodb-local:latest"
+    container_name: dynamodb-local
+    network_mode: host
+    volumes:
+      - "./docker/dynamodb:/home/dynamodblocal/data"
+    working_dir: /home/dynamodblocal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/shell/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: poker-db-init
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    env_file: .env
+    command: ["python", "scripts/init_local_db.py"]
+    network_mode: host
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: poker-bridge
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    env_file: .env
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    network_mode: host
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: poker-ngrok
+    restart: always
+    env_file: .env
+    command:
+      - "http"
+      - "5000"
+    network_mode: host
+    # ngrok token should be in .env as NGROK_AUTHTOKEN

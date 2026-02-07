@@ -1,42 +1,34 @@
-# CompetitionBot Project
+# PokerBot
 
-This project contains the infrastructure and code for the CompetitionBot.
+PokerBot is a Slack assistant designed for private poker groups. It manages weekly game polls and helps players settle debts by analyzing screenshots from the Pokerrrr 2 app using Google Gemini 2.5 Flash.
 
-## Deployment
+## Core Features
 
-The deployment of this project is managed using Terraform. The `deploy.sh` script is used to initialize and apply the Terraform configuration.
+- **Weekly Polls:** Automatically triggers polls to schedule games.
+- **Registration:** Maps Slack users to poker names and Venmo handles.
+- **Vision Processing:** Extracts profit/loss data from app screenshots.
+- **Settlement Logic:** Calculates the most efficient way to settle up (who pays whom).
+- **Venmo Integration:** Generates one-click payment links.
 
-### AWS Authentication
+## Project Structure
 
-The `deploy.sh` script is configured to use a specific AWS CLI profile for authentication. This is crucial for ensuring that the deployment operations are performed with the correct permissions.
+- `poker_worker/`: Core logic (Slack interactions, AI vision, database).
+- `poker_handler/`: API Gateway entry point (signature verification and worker invocation).
+- `main.tf`: Infrastructure defined via Terraform.
+- `build.sh`: Packages Lambdas (uses Docker for binary compatibility).
+- `deploy.sh`: Deploys to AWS.
 
-**Required AWS Profile:** `compbot-dev`
+## Quick Start
 
-Before running `deploy.sh`, ensure that you have an AWS CLI profile named `compbot-dev` configured in your `~/.aws/credentials` file. This profile should contain the access key ID and secret access key for the AWS user or role that has the necessary permissions to deploy the resources defined in `main.tf`.
+### Deployment
 
-**Example `~/.aws/credentials` entry:**
+Deployment is managed via Terraform and requires the `compbot-dev` AWS profile.
 
-```ini
-[compbot-dev]
-aws_access_key_id = YOUR_ACCESS_KEY_ID
-aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
-```
+1.  Ensure you have an AWS profile named `compbot-dev` in `~/.aws/credentials`.
+2.  Run the build and deploy scripts:
+    ```bash
+    ./build.sh
+    ./deploy.sh
+    ```
 
-The `deploy.sh` script explicitly sets the `AWS_PROFILE` environment variable to `compbot-dev` before executing Terraform commands:
-
-```bash
-export AWS_PROFILE="compbot-dev"
-terraform init
-terraform apply -auto-approve
-```
-
-This ensures that Terraform uses the credentials from the `compbot-dev` profile, preventing permission errors (e.g., 403 Forbidden) that might occur if default or incorrect credentials were used.
-
-## Build Process
-
-The `build.sh` script is responsible for packaging the Lambda functions. It performs the following steps:
-1. Cleans up existing build artifacts.
-2. Creates necessary package directories.
-3. Copies Python scripts to the package directories.
-4. Installs Python dependencies into the package directories.
-5. Creates ZIP files for the worker and handler Lambda functions.
+For detailed local development and E2E testing instructions, see [DEVELOPER.md](DEVELOPER.md).
