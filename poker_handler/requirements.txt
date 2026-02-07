@@ -1,1 +1,1 @@
-boto3>=1.36
+# boto3 is provided by the Lambda runtime

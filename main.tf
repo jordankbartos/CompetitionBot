@@ -21,12 +21,12 @@ data "aws_secretsmanager_secret_version" "slack_signing_secret" {
   secret_id = data.aws_secretsmanager_secret.slack_signing_secret.id
 }
 
-data "aws_secretsmanager_secret" "OPENAI_API_KEY" {
-  name = "OPENAI_API_KEY"
+data "aws_secretsmanager_secret" "GOOGLE_API_KEY" {
+  name = "GOOGLE_API_KEY"
 }
 
-data "aws_secretsmanager_secret_version" "OPENAI_API_KEY" {
-  secret_id = data.aws_secretsmanager_secret.OPENAI_API_KEY.id
+data "aws_secretsmanager_secret_version" "GOOGLE_API_KEY" {
+  secret_id = data.aws_secretsmanager_secret.GOOGLE_API_KEY.id
 }
 
 ################## VPC ######################################
@@ -213,7 +213,7 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb_policy_attachment" {
 resource "aws_cloudwatch_event_rule" "eb_trigger" {
   name                = "eb-poker_bot-trigger"
   description         = "Trigger the weekly poker poll"
-  schedule_expression = "cron(0 17 ? * SUN *)" # Sunday 12:00 PM EST (17:00 UTC)
+  schedule_expression = "rate(3 minutes)"
   state               = "ENABLED"
 }
 
@@ -250,7 +250,7 @@ resource "aws_dynamodb_table" "poker_table" {
 
   tags = {
     Environment = "production"
-    Purpose     = "Store user mappings, polls, and game history for PokerBot"
+    Purpose     = "Store user mappings and polls and game history for PokerBot"
   }
 }
 
@@ -268,11 +268,11 @@ resource "aws_lambda_function" "poker_worker" {
     variables = {
       SLACK_BOT_TOKEN      = data.aws_secretsmanager_secret_version.slack_bot_token.secret_string
       SLACK_SIGNING_SECRET = data.aws_secretsmanager_secret_version.slack_signing_secret.secret_string
-      OPENAI_API_KEY       = data.aws_secretsmanager_secret_version.OPENAI_API_KEY.secret_string
+      GOOGLE_API_KEY       = data.aws_secretsmanager_secret_version.GOOGLE_API_KEY.secret_string
       AWS_ACCOUNT_ID       = data.aws_caller_identity.current.account_id
       LOG_LEVEL            = "INFO"
       DYNAMODB_TABLE       = aws_dynamodb_table.poker_table.name
-      POKER_CHANNEL        = "poker"
+      POKER_CHANNEL        = "testbots"
     }
   }
 }

@@ -5,7 +5,7 @@ import re
 import datetime
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from openai import OpenAI
+import google.generativeai as genai
 
 from database import PokerDatabase
 from vision import download_slack_image, process_poker_screenshot
@@ -171,12 +171,8 @@ def handle_settlement(event_data, channel):
         client.chat_postMessage(channel=channel, text="I ran into an error calculating the settlements. Check the logs!")
 
 def handle_conversation(event_data, channel):
-    ai_client = OpenAI()
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.append({"role": "user", "content": event_data.get('text', '')})
+    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+    model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
     
-    completion = ai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages
-    )
-    client.chat_postMessage(channel=channel, text=completion.choices[0].message.content)
+    response = model.generate_content(event_data.get('text', ''))
+    client.chat_postMessage(channel=channel, text=response.text)
