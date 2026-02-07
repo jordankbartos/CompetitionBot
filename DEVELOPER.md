@@ -35,7 +35,7 @@ Generate your `.env` file by pulling secrets from AWS Secrets Manager:
 # This requires AWS CLI login with the compbot-dev profile
 ./scripts/fetch_secrets.sh
 ```
-*Note: If you want to use ngrok in the container, manually add `NGROK_AUTHTOKEN=your_token` to the generated `.env` file.*
+*Note: If you want to use ngrok in the container, manually update the `NGROK_AUTHTOKEN` value in the generated `.env` file.*
 
 ### 2. Start the Stack
 ```bash
