@@ -5,7 +5,14 @@ def init_db():
     endpoint_url = os.environ.get("DYNAMODB_URL", "http://localhost:8000")
     table_name = os.environ.get("DYNAMODB_TABLE", "poker_bot_data")
     
-    dynamodb = boto3.client("dynamodb", endpoint_url=endpoint_url)
+    # For local dev, provide dummy credentials if not found
+    dynamodb = boto3.client(
+        "dynamodb", 
+        endpoint_url=endpoint_url, 
+        region_name="us-east-1",
+        aws_access_key_id="local",
+        aws_secret_access_key="local"
+    )
     
     try:
         dynamodb.create_table(

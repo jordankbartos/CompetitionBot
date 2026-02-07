@@ -7,7 +7,20 @@ logger = logging.getLogger(__name__)
 class PokerDatabase:
     def __init__(self):
         endpoint_url = os.environ.get("DYNAMODB_URL")
-        self.dynamodb = boto3.resource("dynamodb", endpoint_url=endpoint_url)
+        # For local DynamoDB, we must provide a region_name if not in env
+        region_name = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+        
+        if endpoint_url:
+            self.dynamodb = boto3.resource(
+                "dynamodb", 
+                endpoint_url=endpoint_url, 
+                region_name=region_name,
+                aws_access_key_id="local",
+                aws_secret_access_key="local"
+            )
+        else:
+            self.dynamodb = boto3.resource("dynamodb")
+            
         self.table_name = os.environ["DYNAMODB_TABLE"]
         self.table = self.dynamodb.Table(self.table_name)
 

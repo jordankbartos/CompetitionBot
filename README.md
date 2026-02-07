@@ -1,34 +1,59 @@
-# PokerBot
+# 🃏 PokerBot
 
-PokerBot is a Slack assistant designed for private poker groups. It manages weekly game polls and helps players settle debts by analyzing screenshots from the Pokerrrr 2 app using Google Gemini 2.5 Flash.
+PokerBot is a Slack-based assistant tailored for private poker groups. It streamlines the "boring" parts of playing poker: scheduling games, tracking who owes whom, and generating easy payment links.
 
-## Core Features
+Powered by **AWS Lambda**, **DynamoDB**, and **Google Gemini 1.5 Flash**, PokerBot uses advanced AI vision to parse game results directly from screenshots.
 
-- **Weekly Polls:** Automatically triggers polls to schedule games.
-- **Registration:** Maps Slack users to poker names and Venmo handles.
-- **Vision Processing:** Extracts profit/loss data from app screenshots.
-- **Settlement Logic:** Calculates the most efficient way to settle up (who pays whom).
-- **Venmo Integration:** Generates one-click payment links.
+---
 
-## Project Structure
+## 🚀 Features
 
-- `poker_worker/`: Core logic (Slack interactions, AI vision, database).
-- `poker_handler/`: API Gateway entry point (signature verification and worker invocation).
-- `main.tf`: Infrastructure defined via Terraform.
-- `build.sh`: Packages Lambdas (uses Docker for binary compatibility).
-- `deploy.sh`: Deploys to AWS.
+- **Automated Scheduling:** Triggers weekly polls to find the best night for a game.
+- **Smart Registration:** Maps Slack users to their in-game poker names and Venmo handles.
+- **AI-Powered Vision:** Just post a screenshot of the Pokerrrr 2 result screen, and PokerBot will extract everyone's profit/loss.
+- **Optimized Settlements:** Calculates the minimum number of transactions needed to settle all debts.
+- **One-Click Payments:** Generates Venmo deep links so you can pay your debts with a single tap.
+- **AI Conversation:** Chat with PokerBot about the game or anything else – it knows the lingo.
 
-## Quick Start
+---
 
-### Deployment
+## 🛠 Commands
 
-Deployment is managed via Terraform and requires the `compbot-dev` AWS profile.
+Mention `@PokerBot` in any channel it's in to use these commands:
 
-1.  Ensure you have an AWS profile named `compbot-dev` in `~/.aws/credentials`.
-2.  Run the build and deploy scripts:
-    ```bash
-    ./build.sh
-    ./deploy.sh
-    ```
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `register "Name" @Venmo` | Map your Slack ID to your poker name and Venmo handle. | `@PokerBot register "Doyle Brunson" @Doyle-Poker` |
+| `settle up` | Post this along with a Pokerrrr 2 screenshot to calculate debts. | `@PokerBot settle up [attached image]` |
+| `results` / `poll` | View the current tally for the weekly game poll. | `@PokerBot results` |
+| `[anything else]` | Chat with PokerBot. It responds using Gemini AI. | `@PokerBot who is the biggest whale here?` |
 
-For detailed local development and E2E testing instructions, see [DEVELOPER.md](DEVELOPER.md).
+---
+
+## 🏗 Project Structure
+
+- `poker_handler/`: Entry point Lambda that handles Slack signature verification and fast-ack.
+- `poker_worker/`: Core logic Lambda (AI vision, settlement math, DB operations).
+- `terraform/` (`main.tf`): Infrastructure as Code defining the AWS environment.
+- `scripts/`: Utility scripts for local development and setup.
+
+---
+
+## 📦 Quick Start
+
+### Prerequisites
+- AWS Account with CLI configured (`compbot-dev` profile).
+- Docker (for building Lambda-compatible packages).
+- Python 3.12.
+
+### Deploy to AWS
+1. **Build:** Package the Lambda functions:
+   ```bash
+   ./build.sh
+   ```
+2. **Deploy:** Apply Terraform changes:
+   ```bash
+   ./deploy.sh
+   ```
+
+For deep dives into the architecture and local development setup, see [DEVELOPER.md](DEVELOPER.md).

@@ -1,80 +1,125 @@
-# Developer Guide
+# 🛠 Developer Guide
 
-This document explains how to set up the local development environment for PokerBot, including E2E testing with Slack.
+This document provides a deep dive into the architecture, design decisions, and internal logic of PokerBot.
 
-## Local Development Stack
+---
 
-- **Database:** DynamoDB Local (via Docker Compose)
-- **AI:** Google Gemini (Live API)
-- **Slack Tunnel:** ngrok (to receive webhooks locally)
-- **Bridge:** Flask (to translate Slack HTTP requests to Lambda events)
+## 📐 Architecture
 
-## Prerequisites
+PokerBot is built on a serverless architecture using AWS. It follows an asynchronous processing pattern to stay within Slack's 3-second response limit.
 
-1.  **Docker & Docker Compose**
-2.  **AWS CLI** (configured with `compbot-dev` profile)
-3.  **Python 3.12** (managed via Conda)
-4.  **ngrok** (If using the containerized tunnel, you need an authtoken)
+### High-Level Diagram
 
-## Local Setup Instructions (Full Containerized)
-
-### 0. Environment Setup
-The development environment is managed with **Conda**.
-- **Environment Name:** `slackbot`
-- **Python Version:** 3.12
-
-Before beginning development, verify that this environment exists and is active:
-```bash
-conda activate slackbot
-python --version  # Should be 3.12.x
+```mermaid
+graph TD
+    Slack[Slack API] -->|Webhook POST| APIGateway[AWS API Gateway]
+    APIGateway -->|Trigger| Handler[poker_handler Lambda]
+    Handler -->|1. Verify Sig| Handler
+    Handler -->|2. Fast Ack| Slack
+    Handler -->|3. Async Invoke| Worker[poker_worker Lambda]
+    
+    Worker -->|Read/Write| DynamoDB[(Amazon DynamoDB)]
+    Worker -->|Image Analysis| Gemini[Google Gemini AI]
+    Worker -->|Post Message| Slack
+    
+    EventBridge[AWS EventBridge] -->|Scheduled Trigger| Worker
 ```
 
-### 1. Configure Environment Variables
-Generate your `.env` file by pulling secrets from AWS Secrets Manager:
-```bash
-# This requires AWS CLI login with the compbot-dev profile
-./scripts/fetch_secrets.sh
+### Components
+
+1.  **poker_handler (Lambda):**
+    - Responsible for signature verification (security).
+    - Handles the Slack "challenge" during app setup.
+    - Asynchronously invokes the `poker_worker` so Slack receives a `200 OK` immediately.
+2.  **poker_worker (Lambda):**
+    - The "brain" of the bot.
+    - Dispatches logic based on event type (mention, interactive action, or scheduled event).
+3.  **DynamoDB:**
+    - Single-table design (PK/SK).
+    - `PK: USER#<slack_id>`, `SK: PROFILE`: Stores poker name and Venmo handle.
+    - `PK: POLL#<week_id>`, `SK: VOTES`: Stores the weekly poll voting map.
+4.  **Google Gemini 1.5 Flash:**
+    - Used for Multimodal Vision (screenshot parsing) and Natural Language Processing.
+
+---
+
+## 🧠 Core Logic & Design Decisions
+
+### Settlement Algorithm (`settlement.py`)
+The bot uses a "Greedy Settlement" approach:
+1.  Separate players into **Winners** and **Losers**.
+2.  Sort both lists by the absolute amount (highest to lowest).
+3.  Match the biggest loser with the biggest winner.
+4.  Calculate the transfer (min of both amounts) and update the tally.
+5.  Repeat until all balances are zero.
+*Decision:* This minimizes the total number of transactions, making it easier for the group to settle up.
+
+### Vision Processing (`vision.py`)
+Instead of brittle OCR and regex, we use **Gemini 1.5 Flash**.
+- **Input:** Image bytes from Slack + specialized prompt.
+- **Output:** Structured JSON with net amounts.
+- **Validation:** The worker verifies that the sum of all extracted net amounts is zero before proceeding.
+
+### Local Development Bridge (`local_bridge.py`)
+Since AWS Lambda is hard to debug locally, we use a Flask-based bridge that:
+- Listens for Slack webhooks locally.
+- Mimics the API Gateway event format.
+- Directly calls the `lambda_handler` in the worker logic.
+- Works with **DynamoDB Local** and **ngrok**.
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+| Variable | Description | Location |
+| :--- | :--- | :--- |
+| `SLACK_BOT_TOKEN` | Bot User OAuth Token | Secrets Manager |
+| `SLACK_SIGNING_SECRET` | For request verification | Secrets Manager |
+| `GOOGLE_API_KEY` | For Gemini AI | Secrets Manager |
+| `DYNAMODB_TABLE` | Main data table | Terraform |
+| `POKER_CHANNEL` | Slack channel name for polls | Terraform |
+
+### Adjusting the Poll Schedule
+The polling interval is defined in `main.tf` under `aws_cloudwatch_event_rule.eb_trigger`. For development, it's set to every 3 minutes. For production, you should change it to a cron expression:
+```hcl
+# Example for every Monday at 10:00 AM UTC
+schedule_expression = "cron(0 10 ? * MON *)"
 ```
-*Note: If you want to use ngrok in the container, manually update the `NGROK_AUTHTOKEN` value in the generated `.env` file.*
 
-### 2. Start the Stack
+---
+
+## 🧪 Local Setup (Detailed)
+
+### Environment Variables
+The bot requires several environment variables (see `main.tf` for the full list). In local development, these are loaded from a `.env` file generated by `./scripts/fetch_secrets.sh`.
+
+### Database Initialization
+When using DynamoDB local, you must initialize the table schema:
 ```bash
-docker-compose up --build
+python scripts/init_local_db.py
 ```
-This single command will:
-- Start **DynamoDB Local**.
-- **Initialize** the local table schema.
-- Start the **Slack Bridge** (Flask server) on port 5000.
-- Start **ngrok** (if authtoken is provided).
 
-### 3. Update Slack App Configuration
-Go to your [Slack App Dashboard](https://api.slack.com/apps):
-- **Event Subscriptions:** Change Request URL to your ngrok URL + `/slackbot`.
-- **Interactivity & Shortcuts:** Change Request URL to your ngrok URL + `/slackbot`.
+### Running the Bridge
+```bash
+python local_bridge.py
+```
+Then point `ngrok` to port 5000:
+```bash
+ngrok http 5000
+```
 
-*Note: The production URL for this app is:* `https://ofl4z9e8u9.execute-api.us-east-1.amazonaws.com/prod/slackbot`
+---
 
-## Legacy/Manual Local Setup (Host-side)
-If you prefer running the bridge directly in your host environment (e.g., for easier debugging in an IDE):
+## 🚢 CI/CD & Deployment
 
-1.  **Start DB:** `docker-compose up -d dynamodb-local`
-2.  **Env Variables:** Since the script now generates a `.env` file, you can load it into your shell using:
-    ```bash
-    export $(grep -v '^#' .env | xargs)
-    ```
-3.  **Init DB:** `python scripts/init_local_db.py`
-4.  **Run Bridge:** `python local_bridge.py`
-5.  **ngrok:** `ngrok http 5000`
+### Packaging
+Lambdas are packaged using `build.sh`. This script uses a Docker container (`amazonlinux`) to install dependencies, ensuring that C-extensions (like `cryptography` or `grpcio`) are compatible with the AWS Lambda environment.
 
-## Build and Deployment
-
-### Binary Compatibility
-AWS Lambda runs on Amazon Linux. If you are developing on a different OS (e.g., Manjaro, MacOS), `pip install` may download incompatible binary extensions.
-
-**Always use `build.sh` to package the app.** It uses a Dockerized Amazon Linux environment to ensure compatibility.
-
-### Deployment Workflow
-1.  Verify changes locally via the bridge.
-2.  Run `./build.sh` to create the zip files.
-3.  Run `./deploy.sh` to apply infrastructure changes and update code.
-4.  Revert Slack App URLs back to the production API Gateway endpoint.
+### Terraform
+`main.tf` manages:
+- IAM Roles & Policies.
+- API Gateway & Lambda configurations.
+- DynamoDB Table.
+- EventBridge Rules (scheduling).
+- Secrets Manager references.
