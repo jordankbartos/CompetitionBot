@@ -43,10 +43,14 @@ def request_handler(event, context):
     logger.info(f"Event: {event}")
     
     headers = {k.lower(): v for k, v in event.get('headers', {}).items()} # Case-insensitive
-    headers = {
-        'x-slack-request-timestamp': event.get('headers', {}).get('X-Slack-Request-Timestamp'),
-        'x-slack-signature': event.get('headers', {}).get('X-Slack-Signature')
-    }
+    
+    # Slack retry logic: Ignore retries to avoid duplicates during long-running tasks
+    if headers.get('x-slack-retry-num'):
+        logger.info(f"Ignoring Slack retry attempt {headers.get('x-slack-retry-num')}")
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Success (Retry Ignored)')
+        }
 
     raw_body = event.get('body', '')
     if not raw_body:

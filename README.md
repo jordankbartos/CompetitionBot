@@ -8,7 +8,7 @@ Powered by **AWS Lambda**, **DynamoDB**, and **Google Gemini 1.5 Flash**, PokerB
 
 ## 🚀 Features
 
-- **Automated Scheduling:** Triggers weekly polls to find the best night for a game.
+- **Automated Scheduling:** Triggers weekly reaction-based polls with randomized emojis to find the best night for a game.
 - **Smart Registration:** Maps Slack users to their in-game poker names and Venmo handles.
 - **AI-Powered Vision:** Just post a screenshot of the Pokerrrr 2 result screen, and PokerBot will extract everyone's profit/loss.
 - **Optimized Settlements:** Calculates the minimum number of transactions needed to settle all debts.
@@ -25,7 +25,7 @@ Mention `@PokerBot` in any channel it's in to use these commands:
 | :--- | :--- | :--- |
 | `register "Name" @Venmo` | Map your Slack ID to your poker name and Venmo handle. | `@PokerBot register "Doyle Brunson" @Doyle-Poker` |
 | `settle up` | Post this along with a Pokerrrr 2 screenshot to calculate debts. | `@PokerBot settle up [attached image]` |
-| `results` / `poll` | View the current tally for the weekly game poll. | `@PokerBot results` |
+| `results` / `poll` | View the current emoji reaction tally for the weekly game poll. | `@PokerBot results` |
 | `[anything else]` | Chat with PokerBot. It responds using Gemini AI. | `@PokerBot who is the biggest whale here?` |
 
 ---

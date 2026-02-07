@@ -38,27 +38,13 @@ def lambda_handler(event, context):
     payload_type = event.get('type')
     
     if payload_type == "interactive":
-        handle_interactive(payload)
+        # Interactive buttons are no longer used for the poll, but we'll keep the structure
+        # in case we add other interactive features later.
+        pass
     elif payload_type == "event":
         handle_event(payload)
     
     return {"statusCode": 200, "body": "OK"}
-
-def handle_interactive(payload):
-    user_id = payload['user']['id']
-    actions = payload.get('actions', [])
-    if not actions:
-        return
-
-    action = actions[0]
-    action_id = action['action_id']
-    
-    if action_id.startswith("poll_vote_"):
-        day = action_id.replace("poll_vote_", "")
-        week_id = datetime.datetime.now().strftime("%Y-W%V")
-        success = db.save_poll_vote(week_id, day, user_id)
-        if success:
-            logger.info(f"Vote saved for {user_id}: {day}")
 
 def handle_event(body):
     if 'event' not in body:
@@ -72,7 +58,7 @@ def handle_event(body):
         
         if "register" in text:
             handle_registration(text, user_id, channel)
-        elif "settle up" in text:
+        elif "settle up" in text or "beep boop" in text:
             handle_settlement(event_data, channel)
         elif "results" in text or "poll" in text:
             handle_poll_results(channel)
@@ -80,26 +66,55 @@ def handle_event(body):
             handle_conversation(event_data, channel)
 
 def handle_poll_results(channel):
-    week_id = datetime.datetime.now().strftime("%Y-W%V")
-    poll_data = db.get_poll(week_id)
+    now = datetime.datetime.now()
+    monday = now - datetime.timedelta(days=now.weekday())
+    week_label = monday.strftime("%B %d, %Y")
+    week_id = now.strftime("%Y-W%V")
     
-    if not poll_data or not poll_data.get('votes'):
-        client.chat_postMessage(channel=channel, text=f"No votes yet for this week ({week_id})!")
+    poll_metadata = db.get_poll_metadata(week_id)
+    
+    if not poll_metadata:
+        client.chat_postMessage(channel=channel, text=f"No poll found for the week of {week_label}!")
         return
 
-    # votes is a map: user_id -> day
-    votes = poll_data['votes']
-    tally = {}
-    for uid, day in votes.items():
-        tally[day] = tally.get(day, 0) + 1
-    
-    sorted_days = sorted(tally.items(), key=lambda x: x[1], reverse=True)
-    
-    response = [f"*Poll Results for week {week_id}:*"]
-    for day, count in sorted_days:
-        response.append(f"• {day}: {count} vote(s)")
-    
-    client.chat_postMessage(channel=channel, text="\n".join(response))
+    try:
+        # Fetch live reactions for the poll message
+        response = client.reactions_get(
+            channel=poll_metadata['channel_id'],
+            timestamp=poll_metadata['message_ts']
+        )
+        
+        if not response['ok']:
+            client.chat_postMessage(channel=channel, text="I couldn't fetch the poll reactions. Slack API error.")
+            return
+
+        message = response['message']
+        reactions = message.get('reactions', [])
+        emoji_mapping = poll_metadata['emoji_mapping'] # emoji_name -> Day
+        
+        tally = {day: 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri"]}
+        
+        for reaction in reactions:
+            emoji_name = reaction['name']
+            if emoji_name in emoji_mapping:
+                day = emoji_mapping[emoji_name]
+                # Subtract 1 to account for the bot's own seeding reaction
+                count = max(0, reaction['count'] - 1)
+                tally[day] = count
+        
+        sorted_days = sorted(tally.items(), key=lambda x: x[1], reverse=True)
+        
+        response_lines = [f"*Current Poll Results (week of {week_label}):*"]
+        for day, count in sorted_days:
+            emoji = [e for e, d in emoji_mapping.items() if d == day][0]
+            response_lines.append(f"- :{emoji}: {day}: {count} vote(s)")
+        
+        client.chat_postMessage(channel=channel, text="\n".join(response_lines))
+
+
+    except SlackApiError as e:
+        logger.exception("Failed to get reactions from Slack")
+        client.chat_postMessage(channel=channel, text="Something went wrong while fetching the poll results.")
 
 def handle_registration(text, slack_id, channel):
     match = re.search(r'register\s+"([^"]+)"\s+(@?[\w-]+)', text, re.IGNORECASE)
@@ -111,11 +126,11 @@ def handle_registration(text, slack_id, channel):
             
         success = db.register_user(slack_id, poker_name, venmo_handle)
         if success:
-            msg = f"Got it! I've registered <@{slack_id}> as '{poker_name}' with Venmo handle {venmo_handle}."
+            msg = f"Got it! I've registered <@{slack_id}> as '{poker_name}' with Venmo handle {venmo_handle}. Make sure '{poker_name}' matches your name in the Pokerrrr 2 app exactly!"
         else:
             msg = "Sorry, I had trouble saving your registration. Try again later?"
     else:
-        msg = "To register, use: `@PokerBot register \"Your Poker Name\" @YourVenmoHandle`"
+        msg = "To register, use: `@PokerBot register \"Your Poker Name\" @YourVenmoHandle`. Note: Your Poker Name must match what appears in the game screenshot exactly!"
     
     client.chat_postMessage(channel=channel, text=msg)
 
@@ -141,7 +156,11 @@ def handle_settlement(event_data, channel):
     
     try:
         player_data = json.loads(vision_json)
-        
+        # Convert cents to dollars if they are in cents
+        # We'll divide everything by 100
+        for player in player_data:
+            player_data[player] = player_data[player] / 100.0
+            
         # Validation: Sum should be 0
         total_sum = sum(player_data.values())
         if abs(total_sum) > 0.01: # Use small epsilon for float issues
@@ -156,19 +175,28 @@ def handle_settlement(event_data, channel):
             return
             
         users = db.get_all_users()
-        poker_to_venmo = {u['poker_name']: u['venmo_handle'] for u in users}
-        poker_to_slack = {u['poker_name']: u['PK'].replace('USER#', '') for u in users}
+        # Create case-insensitive lookups
+        poker_to_venmo = {u['poker_name'].lower().strip(): u['venmo_handle'] for u in users}
+        poker_to_slack = {u['poker_name'].lower().strip(): u['PK'].replace('USER#', '') for u in users}
         
+        logger.info(f"Registered users: {list(poker_to_venmo.keys())}")
+        logger.info(f"Settlements to process: {settlements}")
+
         response_lines = ["*Settlement Plan:*"]
         for debtor_poker, creditor_poker, amount in settlements:
-            creditor_venmo = poker_to_venmo.get(creditor_poker, f"(No Venmo for {creditor_poker})")
-            debtor_slack = poker_to_slack.get(debtor_poker)
+            creditor_key = creditor_poker.lower().strip()
+            debtor_key = debtor_poker.lower().strip()
+            
+            logger.info(f"Matching creditor '{creditor_poker}' (key: '{creditor_key}')")
+            
+            creditor_venmo = poker_to_venmo.get(creditor_key, f"(No Venmo for {creditor_poker})")
+            debtor_slack = poker_to_slack.get(debtor_key)
             debtor_tag = f"<@{debtor_slack}>" if debtor_slack else debtor_poker
             
             v_link = generate_venmo_link(creditor_venmo, amount) if "No Venmo" not in creditor_venmo else ""
             link_text = f"<{v_link}|Pay {creditor_venmo}>" if v_link else "Please register to get Venmo links!"
             
-            response_lines.append(f"• {debtor_tag} pays *{creditor_poker}* ${amount:.2f} - {link_text}")
+            response_lines.append(f"- {debtor_tag} pays *{creditor_poker}* ${amount:.2f} - {link_text}")
             
         client.chat_postMessage(channel=channel, text="\n".join(response_lines))
         

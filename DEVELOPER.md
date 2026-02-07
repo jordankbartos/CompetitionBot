@@ -37,7 +37,7 @@ graph TD
 3.  **DynamoDB:**
     - Single-table design (PK/SK).
     - `PK: USER#<slack_id>`, `SK: PROFILE`: Stores poker name and Venmo handle.
-    - `PK: POLL#<week_id>`, `SK: VOTES`: Stores the weekly poll voting map.
+    - `PK: POLL#<week_id>`, `SK: METADATA`: Stores the message ID and randomized emoji-to-day mapping for the week's poll.
 4.  **Google Gemini 1.5 Flash:**
     - Used for Multimodal Vision (screenshot parsing) and Natural Language Processing.
 
@@ -59,6 +59,12 @@ Instead of brittle OCR and regex, we use **Gemini 1.5 Flash**.
 - **Input:** Image bytes from Slack + specialized prompt.
 - **Output:** Structured JSON with net amounts.
 - **Validation:** The worker verifies that the sum of all extracted net amounts is zero before proceeding.
+
+### Reaction-Based Polling
+To avoid interactive button timeouts and preserve a traditional voting feel:
+1.  **Generation:** The bot picks 5 random unique emojis from a curated list.
+2.  **Seeding:** It posts a text message and immediately adds those 5 emojis as reactions.
+3.  **Tallying:** When results are requested, the bot fetches the live reaction counts from Slack, subtracts its own "seed" reaction, and maps the emojis back to their assigned days using metadata stored in DynamoDB.
 
 ### Local Development Bridge (`local_bridge.py`)
 Since AWS Lambda is hard to debug locally, we use a Flask-based bridge that:
@@ -107,6 +113,11 @@ python local_bridge.py
 Then point `ngrok` to port 5000:
 ```bash
 ngrok http 5000
+```
+
+To manually trigger a weekly poll for testing:
+```bash
+curl -X POST http://localhost:5000/trigger-poll
 ```
 
 ---

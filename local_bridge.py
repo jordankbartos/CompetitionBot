@@ -4,11 +4,17 @@ import hmac
 import hashlib
 import time
 import sys
+import threading
 from flask import Flask, request, jsonify
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 # Add poker_worker to path so we can import the handler
 sys.path.append(os.path.join(os.getcwd(), "poker_worker"))
 from slack_bot import lambda_handler
+from event_bridge_trigger import handle_event_bridge_trigger
 from utils import get_env
 
 app = Flask(__name__)
@@ -59,6 +65,11 @@ def slackbot():
     if not verify_slack_signature(headers, raw_body_bytes):
         return "Forbidden", 403
 
+    # Slack retry logic: Ignore retries to avoid duplicates during long-running tasks
+    if headers.get('x-slack-retry-num'):
+        print(f"Ignoring Slack retry attempt {headers.get('x-slack-retry-num')}")
+        return "OK", 200
+
     body = request.get_json(silent=True) or {}
     payload_type = "event"
     
@@ -78,20 +89,33 @@ def slackbot():
         print("Responding to Slack challenge")
         return body['challenge'], 200, {'Content-Type': 'text/plain'}
 
-    # Invoke the worker handler directly
+    # Invoke the worker handler in a background thread
     event = {
         "payload": body,
         "type": payload_type
     }
     
-    # Run the handler (in a real Lambda this would be async, but here we run it sync for simplicity)
-    # If it takes too long Slack might timeout (3s), but for local testing it's usually fine.
-    try:
-        lambda_handler(event, None)
-    except Exception as e:
-        print(f"Error in lambda_handler: {e}")
+    def run_async():
+        try:
+            lambda_handler(event, None)
+        except Exception as e:
+            print(f"Error in lambda_handler: {e}")
+
+    thread = threading.Thread(target=run_async)
+    thread.start()
 
     return "OK", 200
+
+@app.route("/trigger-poll", methods=["POST"])
+def trigger_poll():
+    print("\n--- Manually triggering weekly poker poll ---")
+    event = {"source": "aws.events"}
+    try:
+        handle_event_bridge_trigger(event, None)
+        return "Poll triggered", 200
+    except Exception as e:
+        print(f"Error triggering poll: {e}")
+        return str(e), 500
 
 if __name__ == "__main__":
     # Check if .env exists
