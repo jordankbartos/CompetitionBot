@@ -8,17 +8,20 @@ This guide is for agentic coding agents (like yourself) working in the PokerBot 
 - **Build Package:** `./build.sh` (Packages Lambdas using Docker for binary compatibility).
 - **Deploy to AWS:** `./deploy.sh` (Runs Terraform apply).
 - **Destroy Infra:** `./destroy.sh` (Runs Terraform destroy).
+- **CRITICAL:** All dependencies with C-extensions (e.g., `grpcio`, `cryptography`) **MUST** be built using the Dockerized environment in `build.sh`. Never run `pip install` directly for deployment purposes. `boto3` is provided by the Lambda runtime; do not include it in `requirements.txt`.
 
 ### Local Development
+- **Environment:** Development is managed with **Conda** (env: `slackbot`). Verify the environment is active before starting work.
 - **Initialize DB:** `python scripts/init_local_db.py` (Creates table schema in DynamoDB Local).
 - **Start Local Bridge:** `python local_bridge.py` (Flask server mimicking AWS Lambda).
+- **Docker Compose:** Prefer `docker-compose up` for local E2E testing to ensure parity (includes `dynamodb-local`, `bridge`, and `ngrok`).
 - **Expose Locally:** `ngrok http 5000` (Use for Slack webhook integration).
 - **Trigger Poll:** `curl -X POST http://localhost:5000/trigger-poll` (Manually fires the scheduler).
 - **Environment Variables:** Local dev uses a `.env` file. Do not commit this file. See `fetch_secrets.sh` for how to pull production values for local testing.
 
 ### Testing Strategy
 - **Unit Tests:** Focus on domain logic (e.g., `settlement.py`). These should have zero external dependencies.
-- **Integration Tests:** Test the interaction between domain logic and the database wrapper. Use DynamoDB Local for these.
+- **Integration Tests:** Test the interaction between domain logic and the database wrapper. Use DynamoDB Local or the Docker Compose stack.
 - **Mocking:** Use `unittest.mock` to mock Slack API calls or Gemini AI responses.
 - **Test Discovery:** Ensure all tests are in the `tests/` directory and follow the `test_*.py` naming pattern.
 - **Test Coverage:** Aim for high coverage in the `Domain` layer. Infrastructure and Adapters can be covered by integration tests.
@@ -69,6 +72,7 @@ The codebase follows **Clean Architecture** to ensure it can grow and adapt:
 - **Decoupling:** Business logic must not know about Slack or AWS. It should take raw data (dicts, lists, primitives) and return results.
 - **Dependency Injection:** Pass dependencies (like database clients or configuration) into functions or classes rather than hardcoding global instances. This makes testing significantly easier.
 - **Abstraction:** Use abstract base classes or protocols if you anticipate needing multiple implementations (e.g., switching from Gemini to another LLM).
+- **Secrets:** Use `utils.get_env()` to access environment variables. It handles both raw strings and JSON-encoded secrets from AWS Secrets Manager.
 
 ### 1. Lambda Separation
 - **`poker_handler/`**: Lightweight entry point. 
@@ -78,7 +82,7 @@ The codebase follows **Clean Architecture** to ensure it can grow and adapt:
     - Triggers the worker Lambda asynchronously.
 - **`poker_worker/`**: Core orchestrator. 
     - Triggered by the handler or EventBridge.
-    - Manages stateful conversations using the LLM.
+    - Manages stateful conversations using the LLM (Gemini).
     - Dispatches work to specialized domain services.
 
 ### 2. DynamoDB Single-Table Design
@@ -96,25 +100,25 @@ We use a single table for all data. Query patterns:
 
 ## 🚀 Workflow Examples
 
-### Example: Adding a New Database Query
-When adding a new query pattern to `database.py`:
-1.  **Define the Purpose:** Ensure it follows SRP. Don't mix user profile logic with game result logic.
-2.  **Descriptive Naming:** Name the method exactly what it does, e.g., `get_user_game_history_by_poker_name`.
-3.  **Type Hinting:** `def get_history(self, name: str) -> list[dict[str, Any]]:`.
-4.  **No Comments Needed:** The method name and type hints should explain the "what". The docstring explains the "how" for the LLM.
+### Example: Adding a New Feature
+1.  **Define Logic:** Implement core logic in a domain module (e.g., `poker_worker/settlement.py`).
+2.  **Expose Tool:** Add a corresponding tool in `agent_tools.py`.
+3.  **Test E2E:** Use `docker-compose up` and the `local_bridge.py` workflow.
+4.  **Verify UI:** Check extraction/responses via the Slack integration (ngrok).
 
-### Example: Implementing a New Tool
-When adding a tool to `agent_tools.py`:
-1.  **Isolated Logic:** Keep the tool focused. If it needs to calculate something, put the calculation in a domain service (e.g., `settlement.py`) and have the tool call it.
-2.  **Docstrings are Code:** The docstring is the interface for the LLM. Be precise about arguments and return values.
-3.  **Error Handling:** Catch exceptions and return a user-friendly error string so the LLM can explain it to the user.
+### Example: Updating Infrastructure
+1.  **Modify Terraform:** Update `main.tf` (resources use `poker_` prefix).
+2.  **Deploy:** Run `./deploy.sh`.
+3.  **Update Docs:** If the change affects behavior, update `README.md` or `DEVELOPER.md`.
 
 ---
 
 ## 💡 Agent Instructions
 1. **Be Proactive:** If you add a new database field, update the corresponding `PokerDatabase` methods and ensure `agent_tools.py` can expose it.
 2. **Consult Docs:** Always read `DEVELOPER.md` before making architectural changes.
-3. **Environment:** Use `utils.get_env()` to fetch environment variables; it handles fallback/logging logic.
-4. **Safety:** Never hardcode secrets. Use environment variables that map to AWS Secrets Manager.
-5. **Idempotency:** Ensure game recording and registration are idempotent (check `fingerprint` in `record_game_result`).
-6. **Error Handling:** Always use `try...except` blocks around external service calls and log the exception with context.
+3. **Git Hygiene:** NEVER commit or push changes automatically. Verify changes first, then request explicit approval.
+4. **Documentation:** ALWAYS update relevant docs when implementing features or changing existing behavior.
+5. **Safety:** Never hardcode secrets. Use environment variables that map to AWS Secrets Manager via `utils.get_env()`.
+6. **Idempotency:** Ensure game recording and registration are idempotent (check `fingerprint` in `record_game_result`).
+7. **Error Handling:** Always use `try...except` blocks around external service calls and log the exception with context.
+
