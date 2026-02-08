@@ -213,7 +213,7 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb_policy_attachment" {
 resource "aws_cloudwatch_event_rule" "eb_trigger" {
   name                = "eb-poker_bot-trigger"
   description         = "Trigger the weekly poker poll"
-  schedule_expression = "rate(3 minutes)"
+  schedule_expression = "cron(0 12 ? * SUN *)"
   state               = "ENABLED"
 }
 
@@ -272,7 +272,7 @@ resource "aws_lambda_function" "poker_worker" {
       AWS_ACCOUNT_ID       = data.aws_caller_identity.current.account_id
       LOG_LEVEL            = "INFO"
       DYNAMODB_TABLE       = aws_dynamodb_table.poker_table.name
-      POKER_CHANNEL        = "testbots"
+      POKER_CHANNEL        = "poker"
     }
   }
 }
