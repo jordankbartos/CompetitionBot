@@ -1,35 +1,38 @@
-import boto3
 import os
+
+import boto3
+
 
 def init_db():
     endpoint_url = os.environ.get("DYNAMODB_URL", "http://localhost:8000")
     table_name = os.environ.get("DYNAMODB_TABLE", "poker_bot_data")
-    
+
     # For local dev, provide dummy credentials if not found
     dynamodb = boto3.client(
-        "dynamodb", 
-        endpoint_url=endpoint_url, 
+        "dynamodb",
+        endpoint_url=endpoint_url,
         region_name="us-east-1",
         aws_access_key_id="local",
-        aws_secret_access_key="local"
+        aws_secret_access_key="local",
     )
-    
+
     try:
         dynamodb.create_table(
             TableName=table_name,
             KeySchema=[
                 {"AttributeName": "PK", "KeyType": "HASH"},
-                {"AttributeName": "SK", "KeyType": "RANGE"}
+                {"AttributeName": "SK", "KeyType": "RANGE"},
             ],
             AttributeDefinitions=[
                 {"AttributeName": "PK", "AttributeType": "S"},
-                {"AttributeName": "SK", "AttributeType": "S"}
+                {"AttributeName": "SK", "AttributeType": "S"},
             ],
-            BillingMode="PAY_PER_REQUEST"
+            BillingMode="PAY_PER_REQUEST",
         )
         print(f"Table {table_name} created successfully.")
     except dynamodb.exceptions.ResourceInUseException:
         print(f"Table {table_name} already exists.")
+
 
 if __name__ == "__main__":
     init_db()

@@ -17,11 +17,11 @@ graph TD
     Handler -->|1. Verify Sig| Handler
     Handler -->|2. Fast Ack| Slack
     Handler -->|3. Async Invoke| Worker[poker_worker Lambda]
-    
+
     Worker -->|Read/Write| DynamoDB[(Amazon DynamoDB)]
     Worker -->|Image Analysis| Gemini[Google Gemini AI]
     Worker -->|Post Message| Slack
-    
+
     EventBridge[AWS EventBridge] -->|Scheduled Trigger| Worker
 ```
 

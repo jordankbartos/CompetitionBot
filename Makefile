@@ -13,6 +13,8 @@ help:
 	@echo "  make secrets    - Fetch production secrets for local development"
 	@echo "  make init-db    - Initialize local DynamoDB table schema"
 	@echo "  make test       - Run unit tests"
+	@echo "  make lint       - Run pre-commit hooks on all files"
+	@echo "  make install-hooks - Install pre-commit hooks"
 
 build:
 	bash scripts/build.sh
@@ -39,3 +41,9 @@ init-db:
 
 test:
 	python3 -m unittest discover tests
+
+lint:
+	pre-commit run --all-files
+
+install-hooks:
+	pre-commit install
