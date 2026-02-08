@@ -272,7 +272,7 @@ resource "aws_lambda_function" "poker_worker" {
       AWS_ACCOUNT_ID       = data.aws_caller_identity.current.account_id
       LOG_LEVEL            = "INFO"
       DYNAMODB_TABLE       = aws_dynamodb_table.poker_table.name
-      POKER_CHANNEL        = "poker"
+      POKER_CHANNEL        = "pokerrrr"
     }
   }
 }

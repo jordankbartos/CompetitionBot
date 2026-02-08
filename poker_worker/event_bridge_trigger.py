@@ -18,64 +18,36 @@ logger.setLevel(log_level)
 target_channel = get_env("POKER_CHANNEL") or "poker"
 db = PokerDatabase()
 
+
 def handle_event_bridge_trigger(event, context):
     logger.info("Handling EventBridge trigger for weekly poker poll")
     slack_client = WebClient(token=os.environ['SLACK_BOT_TOKEN'])
 
-    channel_id = _get_channel_id_by_name(slack_client, target_channel)
-    if not channel_id:
-        logger.error(f"Could not find channel {target_channel}")
+    if not (channel_id := _get_channel_id_by_name(slack_client, target_channel)):
         return {"statusCode": 404, "body": "Channel not found"}
 
     now = datetime.datetime.now()
-    monday = now - datetime.timedelta(days=now.weekday())
-    week_label = monday.strftime("%B %d, %Y")
-    week_id = now.strftime("%Y-W%V")
+    week_label, week_id = _get_next_monday_info(now)
+    emoji_mapping = _get_emoji_mapping()
     
-    # 1. Pick 5 unique random emojis
-    selected_emojis = random.sample(POKER_EMOJIS, 5)
-    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    
-    # Create emoji -> day mapping for the DB
-    emoji_mapping = {selected_emojis[i]: days[i] for i in range(5)}
-    
-    # Construct the message
     poll_text = f"*Weekly Poker Poll (week of {week_label})*\nWhich day works best for a game this week?\n"
-    for day, emoji in zip(days, selected_emojis):
+    for day, emoji in emoji_mapping.items():
         poll_text += f":{emoji}: {day}\n"
 
-    try:
-        # 2. Post the message
-        response = slack_client.chat_postMessage(
-            channel=channel_id,
-            text=poll_text
-        )
-        if not response['ok']:
-            logger.error(f"Failed to send poll: {response['error']}")
-            return {"statusCode": 500, "body": "Failed to send poll"}
+    if not (response := _try_post_message(slack_client, channel_id, poll_text)):
+        return {"statusCode": 500, "body": "Failed to send poll"}
 
-        message_ts = response['ts']
+    message_ts = response['ts']
         
-        # 3. Seed reactions
-        for emoji in selected_emojis:
-            try:
-                slack_client.reactions_add(
-                    channel=channel_id,
-                    timestamp=message_ts,
-                    name=emoji
-                )
-            except SlackApiError as e:
-                logger.warning(f"Failed to add reaction {emoji}: {e.response['error']}")
+    for emoji in emoji_mapping.keys():
+        _try_add_reaction(slack_client, channel_id, message_ts, emoji)
 
-        # 4. Save metadata to DB
-        db.save_poll_metadata(week_id, channel_id, message_ts, emoji_mapping)
-        
-        logger.info("Poll sent and metadata saved successfully")
-        return {"statusCode": 200, "body": "Poll sent"}
+    # 4. Save metadata to DB
+    db.save_poll_metadata(week_id, channel_id, message_ts, emoji_mapping)
+    
+    logger.info("Poll sent and metadata saved successfully")
+    return {"statusCode": 200, "body": "Poll sent"}
 
-    except SlackApiError as e:
-        logger.exception("Error sending poll to Slack")
-        return {"statusCode": 500, "body": str(e)}
 
 def _get_channel_id_by_name(client, channel_name):
     try:
@@ -87,3 +59,42 @@ def _get_channel_id_by_name(client, channel_name):
     except SlackApiError as e:
         logger.exception(f"Error fetching conversations: {e.response['error']}")
         return None
+
+def _get_next_monday_info(now):
+    curr_day = now
+    while curr_day.weekday() != 0:
+        curr_day = curr_day + datetime.timedelta(days=1)
+    week_label = curr_day.strftime("%B %d, %Y")
+    week_id = curr_day.strftime("%Y-W%V")
+    return week_label, week_id
+
+def _get_emoji_mapping():
+    selected_emojis = random.sample(POKER_EMOJIS, 5)
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    return dict(zip(selected_emojis, days))
+
+def _try_add_reaction(slack_client, channel_id, message_ts, emoji):
+    try:
+        slack_client.reactions_add(
+            channel=channel_id,
+            timestamp=message_ts,
+            name=emoji
+        )
+    except SlackApiError as e:
+        logger.warning(f"Failed to add reaction {emoji}: {e.response['error']}")
+
+def _try_post_message(slack_client, channel_id, text):
+    try:
+        response = slack_client.chat_postMessage(
+            channel=channel_id,
+            text=text
+        )
+    except SlackApiError as e:
+        logger.exception("Error sending poll to Slack")
+        return None
+
+    if not response['ok']:
+        logger.error(f"Failed to send poll: {response['error']}")
+        return None
+    else:
+        return response

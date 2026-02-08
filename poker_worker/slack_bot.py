@@ -28,6 +28,15 @@ if google_api_key:
 
 slack_token = get_env('SLACK_BOT_TOKEN')
 client = WebClient(token=slack_token)
+
+# Get Bot User ID dynamically
+try:
+    bot_user_id = client.auth_test()["user_id"]
+    logger.info(f"Authenticated as bot user: {bot_user_id}")
+except Exception as e:
+    logger.error(f"Failed to authenticate with Slack: {e}")
+    bot_user_id = "U07D8V4D145" # Fallback
+
 db = PokerDatabase()
 
 # Define the tools for the agent
@@ -141,7 +150,7 @@ def handle_event(body):
     ts = event_data.get('ts')
     
     # 1. Identity Guard: Never respond to self or other bots
-    if user_id == "U07D8V4D145" or event_data.get('subtype') == 'bot_message':
+    if user_id == bot_user_id or event_data.get('subtype') == 'bot_message':
         return
 
     is_mention = False
@@ -156,7 +165,7 @@ def handle_event(body):
     elif event_type == 'message' and not event_data.get('subtype'):
         # If the bot is mentioned in a regular message event, Slack ALREADY 
         # sent an app_mention event. We ignore it here to avoid duplicates.
-        if '<@U07D8V4D145>' in text:
+        if f'<@{bot_user_id}>' in text:
             logger.info("Ignoring bot mention in message event (app_mention handles it)")
             return
 

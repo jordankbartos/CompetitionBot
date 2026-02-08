@@ -14,6 +14,12 @@ db = PokerDatabase()
 slack_token = get_env('SLACK_BOT_TOKEN')
 client = WebClient(token=slack_token)
 
+try:
+    bot_user_id = client.auth_test()["user_id"]
+except Exception:
+    logger.exception("Could not find bot_user_id")
+    bot_user_id = "U07D8V4D145"
+
 JORDAN_ID = "U85D9C8TV"
 
 def get_user_profile(slack_id: str):
@@ -146,7 +152,7 @@ def is_bot_in_thread(channel_id: str, thread_ts: str):
         response = client.conversations_replies(channel=channel_id, ts=thread_ts, limit=20)
         messages = response.get('messages', [])
         for msg in messages:
-            if msg.get('user') == "U07D8V4D145":
+            if msg.get('user') == bot_user_id:
                 return True
         return False
     except Exception as e:
