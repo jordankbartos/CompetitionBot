@@ -8,11 +8,16 @@ import threading
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# Find project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+os.chdir(PROJECT_ROOT)
+
+# Load .env file from project root
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 # Add poker_worker to path so we can import the handler
-sys.path.append(os.path.join(os.getcwd(), "poker_worker"))
+sys.path.append(os.path.join(PROJECT_ROOT, "poker_worker"))
+
 from slack_bot import lambda_handler
 from event_bridge_trigger import handle_event_bridge_trigger
 from utils import get_env
@@ -119,9 +124,10 @@ def trigger_poll():
 
 if __name__ == "__main__":
     # Check if .env exists
-    if not os.path.exists(".env"):
-        print("ERROR: .env file not found!")
-        print("Please run ./scripts/fetch_secrets.sh to generate it from AWS Secrets Manager.")
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.exists(env_path):
+        print(f"ERROR: .env file not found at {env_path}!")
+        print("Please run `make secrets` to generate it from AWS Secrets Manager.")
         sys.exit(1)
 
     # Ensure necessary env vars are present

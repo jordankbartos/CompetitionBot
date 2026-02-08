@@ -40,5 +40,5 @@ find "$BUILD_DIR/$WORKER_PACKAGE_DIR" -type d -name "*.egg-info" -exec rm -rf {}
 find "$BUILD_DIR/$WORKER_PACKAGE_DIR" -name "*.pyc" -delete
 
 # Create the ZIP files using the python utility
-python3 zip_util.py "$BUILD_DIR/$HANDLER_PACKAGE_DIR" "$BUILD_DIR/$HANDLER_ZIP_FILE"
-python3 zip_util.py "$BUILD_DIR/$WORKER_PACKAGE_DIR" "$BUILD_DIR/$WORKER_ZIP_FILE"
+python3 dev/zip_util.py "$BUILD_DIR/$HANDLER_PACKAGE_DIR" "$BUILD_DIR/$HANDLER_ZIP_FILE"
+python3 dev/zip_util.py "$BUILD_DIR/$WORKER_PACKAGE_DIR" "$BUILD_DIR/$WORKER_ZIP_FILE"

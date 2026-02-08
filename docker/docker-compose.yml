@@ -5,7 +5,7 @@ services:
     container_name: dynamodb-local
     network_mode: host
     volumes:
-      - "./docker/dynamodb:/home/dynamodblocal/data"
+      - "./dynamodb:/home/dynamodblocal/data"
     working_dir: /home/dynamodblocal
     healthcheck:
       test: ["CMD-SHELL", "java -jar DynamoDBLocal.jar -help || exit 1"]
@@ -15,36 +15,36 @@ services:
 
   db-init:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
     container_name: poker-db-init
     depends_on:
       dynamodb-local:
         condition: service_healthy
-    env_file: .env
+    env_file: ../.env
     command: ["python", "scripts/init_local_db.py"]
     network_mode: host
 
   bridge:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
     container_name: poker-bridge
     depends_on:
       db-init:
         condition: service_completed_successfully
-    env_file: .env
+    env_file: ../.env
     ports:
       - "5000:5000"
     volumes:
-      - .:/app
+      - ..:/app
     network_mode: host
 
   ngrok:
     image: ngrok/ngrok:latest
     container_name: poker-ngrok
     restart: always
-    env_file: .env
+    env_file: ../.env
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     command:

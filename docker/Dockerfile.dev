@@ -23,9 +23,9 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV FLASK_APP=local_bridge.py
+ENV FLASK_APP=dev/local_bridge.py
 
 # Expose the Flask port
 EXPOSE 5000
 
-CMD ["python", "local_bridge.py"]
+CMD ["python", "dev/local_bridge.py"]
