@@ -6,13 +6,15 @@ import datetime
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import google.generativeai as genai
+from google.generativeai import types
 
 from database import PokerDatabase
 from vision import download_slack_image, process_poker_screenshot
 from settlement import calculate_settlements, generate_venmo_link
-from config import SYSTEM_PROMPT, VISION_PROMPT
+from config import SYSTEM_PROMPT, VISION_PROMPT, MODEL_NAME
 from event_bridge_trigger import handle_event_bridge_trigger
 from utils import get_env
+import agent_tools
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=log_level)
@@ -28,6 +30,91 @@ slack_token = get_env('SLACK_BOT_TOKEN')
 client = WebClient(token=slack_token)
 db = PokerDatabase()
 
+# Define the tools for the agent
+available_tools = [
+    agent_tools.get_user_profile,
+    agent_tools.register_player,
+    agent_tools.calculate_poker_settlements,
+    agent_tools.record_game_result,
+    agent_tools.get_leaderboard,
+    agent_tools.slack_get_history,
+    agent_tools.slack_react,
+    agent_tools.get_weekly_poll_results
+]
+
+def handle_agentic_conversation(event_data):
+    text = event_data.get('text', '')
+    channel = event_data.get('channel')
+    user_id = event_data.get('user')
+    ts = event_data.get('ts')
+    thread_ts = event_data.get('thread_ts')
+
+    logger.info(f"Processing message:\n  {channel=}\n  {user_id=}\n  {ts=}\n  {thread_ts=}")
+    # 1. Download image if present
+    image_bytes = None
+    files = event_data.get('files', [])
+    if files:
+        file_url = files[0].get('url_private')
+        image_bytes = download_slack_image(file_url, slack_token)
+        if image_bytes:
+            # Add a reaction to show we're working
+            try:
+                client.reactions_add(channel=channel, timestamp=ts, name="eyes")
+            except: pass
+
+    # 2. Extract data if image is present
+    vision_data = None
+    if image_bytes:
+        vision_json = process_poker_screenshot(image_bytes)
+        if vision_json:
+            try:
+                vision_data = json.loads(vision_json)
+                if 'players' in vision_data:
+                    cleaned_players = {}
+                    for p, val in vision_data['players'].items():
+                        # Remove parenthetical notes like (left) or (host)
+                        clean_name = re.sub(r'\(.*?\)', '', p).strip()
+                        # ALWAYS treat numbers from vision as cents and convert to dollars
+                        amount = float(val) / 100.0
+                        # Sum up if the same player appears twice (e.g. once with (left))
+                        cleaned_players[clean_name] = cleaned_players.get(clean_name, 0.0) + amount
+                    vision_data['players'] = cleaned_players
+            except:
+                logger.error(f"Failed to parse vision JSON: {vision_json}")
+
+    # 3. Initialize Agent
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        system_instruction=SYSTEM_PROMPT,
+        tools=available_tools
+    )
+    
+    # Construct the prompt
+    prompt_context = (
+        f"Context: channel_id={channel}, thread_ts={thread_ts or 'None'}\n"
+        f"User <@{user_id}> says: {text}\n"
+    )
+    if vision_data:
+        formatted_results = [{"name": k, "amount": v} for k, v in vision_data.get('players', {}).items()]
+        prompt_context += f"I have extracted the following from the attached screenshot (in dollars): {json.dumps(formatted_results)}\n"
+        prompt_context += "If this data is correct and the user wants to settle/record, use the tools to do so."
+
+    chat = model.start_chat(enable_automatic_function_calling=True)
+    
+    try:
+        response = chat.send_message(prompt_context)
+        final_text = response.text
+        
+        # Post the response - Default to channel, not thread
+        # We only use thread_ts if the user's message was ALREADY in a thread
+        reply_ts = event_data.get('thread_ts')
+        
+        client.chat_postMessage(channel=channel, text=final_text, thread_ts=reply_ts)
+        
+    except Exception as e:
+        logger.exception("Agent conversation failed")
+        client.chat_postMessage(channel=channel, text=f"Sorry, I ran into an error processing that.", thread_ts=ts)
+
 def lambda_handler(event, context):
     logger.info(f"Event: {event}")
     
@@ -38,8 +125,6 @@ def lambda_handler(event, context):
     payload_type = event.get('type')
     
     if payload_type == "interactive":
-        # Interactive buttons are no longer used for the poll, but we'll keep the structure
-        # in case we add other interactive features later.
         pass
     elif payload_type == "event":
         handle_event(payload)
@@ -51,161 +136,39 @@ def handle_event(body):
         return
     
     event_data = body['event']
-    if event_data.get('type') == 'app_mention' and 'subtype' not in event_data:
-        text = event_data.get('text', '').lower()
+    event_type = event_data.get('type')
+    user_id = event_data.get('user')
+    ts = event_data.get('ts')
+    
+    # 1. Identity Guard: Never respond to self or other bots
+    if user_id == "U07D8V4D145" or event_data.get('subtype') == 'bot_message':
+        return
+
+    is_mention = False
+    text = event_data.get('text', '')
+    
+    # 2. Check for explicit mention
+    # If it's an app_mention, we always process it.
+    if event_type == 'app_mention':
+        is_mention = True
+    
+    # 3. If it's a message, check if it's a threaded reply
+    elif event_type == 'message' and not event_data.get('subtype'):
+        # If the bot is mentioned in a regular message event, Slack ALREADY 
+        # sent an app_mention event. We ignore it here to avoid duplicates.
+        if '<@U07D8V4D145>' in text:
+            logger.info("Ignoring bot mention in message event (app_mention handles it)")
+            return
+
+        thread_ts = event_data.get('thread_ts')
         channel = event_data.get('channel')
-        user_id = event_data.get('user')
         
-        if "register" in text:
-            handle_registration(text, user_id, channel)
-        elif "settle up" in text or "beep boop" in text:
-            handle_settlement(event_data, channel)
-        elif "results" in text or "poll" in text:
-            handle_poll_results(channel)
-        else:
-            handle_conversation(event_data, channel)
+        if thread_ts:
+            # It's a reply in a thread. Check if we are already in it.
+            if agent_tools.is_bot_in_thread(channel, thread_ts):
+                logger.info(f"Bot participation detected in thread {thread_ts}. Responding...")
+                is_mention = True
 
-def handle_poll_results(channel):
-    now = datetime.datetime.now()
-    monday = now - datetime.timedelta(days=now.weekday())
-    week_label = monday.strftime("%B %d, %Y")
-    week_id = now.strftime("%Y-W%V")
-    
-    poll_metadata = db.get_poll_metadata(week_id)
-    
-    if not poll_metadata:
-        client.chat_postMessage(channel=channel, text=f"No poll found for the week of {week_label}!")
-        return
-
-    try:
-        # Fetch live reactions for the poll message
-        response = client.reactions_get(
-            channel=poll_metadata['channel_id'],
-            timestamp=poll_metadata['message_ts']
-        )
-        
-        if not response['ok']:
-            client.chat_postMessage(channel=channel, text="I couldn't fetch the poll reactions. Slack API error.")
-            return
-
-        message = response['message']
-        reactions = message.get('reactions', [])
-        emoji_mapping = poll_metadata['emoji_mapping'] # emoji_name -> Day
-        
-        tally = {day: 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri"]}
-        
-        for reaction in reactions:
-            emoji_name = reaction['name']
-            if emoji_name in emoji_mapping:
-                day = emoji_mapping[emoji_name]
-                # Subtract 1 to account for the bot's own seeding reaction
-                count = max(0, reaction['count'] - 1)
-                tally[day] = count
-        
-        sorted_days = sorted(tally.items(), key=lambda x: x[1], reverse=True)
-        
-        response_lines = [f"*Current Poll Results (week of {week_label}):*"]
-        for day, count in sorted_days:
-            emoji = [e for e, d in emoji_mapping.items() if d == day][0]
-            response_lines.append(f"- :{emoji}: {day}: {count} vote(s)")
-        
-        client.chat_postMessage(channel=channel, text="\n".join(response_lines))
-
-
-    except SlackApiError as e:
-        logger.exception("Failed to get reactions from Slack")
-        client.chat_postMessage(channel=channel, text="Something went wrong while fetching the poll results.")
-
-def handle_registration(text, slack_id, channel):
-    match = re.search(r'register\s+"([^"]+)"\s+(@?[\w-]+)', text, re.IGNORECASE)
-    if match:
-        poker_name = match.group(1)
-        venmo_handle = match.group(2)
-        if not venmo_handle.startswith('@'):
-            venmo_handle = '@' + venmo_handle
-            
-        success = db.register_user(slack_id, poker_name, venmo_handle)
-        if success:
-            msg = f"Got it! I've registered <@{slack_id}> as '{poker_name}' with Venmo handle {venmo_handle}. Make sure '{poker_name}' matches your name in the Pokerrrr 2 app exactly!"
-        else:
-            msg = "Sorry, I had trouble saving your registration. Try again later?"
-    else:
-        msg = "To register, use: `@PokerBot register \"Your Poker Name\" @YourVenmoHandle`. Note: Your Poker Name must match what appears in the game screenshot exactly!"
-    
-    client.chat_postMessage(channel=channel, text=msg)
-
-def handle_settlement(event_data, channel):
-    files = event_data.get('files', [])
-    if not files:
-        client.chat_postMessage(channel=channel, text="Please attach the Pokerrrr 2 screenshot to your 'settle up' message!")
-        return
-
-    client.chat_postMessage(channel=channel, text="Processing the screenshot... give me a second.")
-    
-    file_url = files[0].get('url_private')
-    image_content = download_slack_image(file_url, slack_token)
-    
-    if not image_content:
-        client.chat_postMessage(channel=channel, text="I couldn't download the image. Make sure I have permission to see files!")
-        return
-    
-    vision_json = process_poker_screenshot(image_content)
-    if not vision_json:
-        client.chat_postMessage(channel=channel, text="I couldn't read the screenshot. Is it a clear Pokerrrr 2 result screen?")
-        return
-    
-    try:
-        player_data = json.loads(vision_json)
-        # Convert cents to dollars if they are in cents
-        # We'll divide everything by 100
-        for player in player_data:
-            player_data[player] = player_data[player] / 100.0
-            
-        # Validation: Sum should be 0
-        total_sum = sum(player_data.values())
-        if abs(total_sum) > 0.01: # Use small epsilon for float issues
-            client.chat_postMessage(channel=channel, text=f"Warning: The net amounts extracted don't sum to zero (Total: {total_sum}). Please check the data or provide a clearer screenshot.")
-            # We'll still show the data so they can see where it went wrong
-            client.chat_postMessage(channel=channel, text=f"Extracted data: {json.dumps(player_data, indent=2)}")
-            return
-
-        settlements = calculate_settlements(player_data)
-        if not settlements:
-            client.chat_postMessage(channel=channel, text="Looks like everyone is even! Nothing to settle.")
-            return
-            
-        users = db.get_all_users()
-        # Create case-insensitive lookups
-        poker_to_venmo = {u['poker_name'].lower().strip(): u['venmo_handle'] for u in users}
-        poker_to_slack = {u['poker_name'].lower().strip(): u['PK'].replace('USER#', '') for u in users}
-        
-        logger.info(f"Registered users: {list(poker_to_venmo.keys())}")
-        logger.info(f"Settlements to process: {settlements}")
-
-        response_lines = ["*Settlement Plan:*"]
-        for debtor_poker, creditor_poker, amount in settlements:
-            creditor_key = creditor_poker.lower().strip()
-            debtor_key = debtor_poker.lower().strip()
-            
-            logger.info(f"Matching creditor '{creditor_poker}' (key: '{creditor_key}')")
-            
-            creditor_venmo = poker_to_venmo.get(creditor_key, f"(No Venmo for {creditor_poker})")
-            debtor_slack = poker_to_slack.get(debtor_key)
-            debtor_tag = f"<@{debtor_slack}>" if debtor_slack else debtor_poker
-            
-            v_link = generate_venmo_link(creditor_venmo, amount) if "No Venmo" not in creditor_venmo else ""
-            link_text = f"<{v_link}|Pay {creditor_venmo}>" if v_link else "Please register to get Venmo links!"
-            
-            response_lines.append(f"- {debtor_tag} pays *{creditor_poker}* ${amount:.2f} - {link_text}")
-            
-        client.chat_postMessage(channel=channel, text="\n".join(response_lines))
-        
-    except Exception as e:
-        logger.exception("Settlement calculation failed")
-        client.chat_postMessage(channel=channel, text="I ran into an error calculating the settlements. Check the logs!")
-
-def handle_conversation(event_data, channel):
-    model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
-    
-    response = model.generate_content(event_data.get('text', ''))
-    client.chat_postMessage(channel=channel, text=response.text)
+    if is_mention:
+        logger.info(f"Processing {event_type} from {user_id} in channel {event_data.get('channel')}")
+        handle_agentic_conversation(event_data)
