@@ -1,11 +1,22 @@
+"""
+Domain logic for poker game settlements and external links.
+This module contains pure business logic and should not have external dependencies.
+"""
+
 import logging
 
 logger = logging.getLogger(__name__)
 
-def calculate_settlements(player_data):
+def calculate_settlements(player_data: dict[str, float]) -> list[tuple[str, str, float]]:
     """
-    player_data: dict { 'Name': net_amount }
-    Returns a list of tuples: (debtor, creditor, amount)
+    Calculates the most efficient way to settle debts between players.
+
+    Args:
+        player_data: A dictionary mapping player names to their net profit/loss.
+                    Positive values are winners, negative are losers.
+
+    Returns:
+        A list of tuples in the format (debtor, creditor, amount).
     """
     # Separate winners and losers
     winners = []
@@ -17,7 +28,7 @@ def calculate_settlements(player_data):
         elif amount < 0:
             losers.append({'name': name, 'amount': abs(amount)})
             
-    # Sort to optimize (optional, but good for largest-to-largest)
+    # Sort to optimize (largest-to-largest reduces number of transactions)
     winners.sort(key=lambda x: x['amount'], reverse=True)
     losers.sort(key=lambda x: x['amount'], reverse=True)
     
@@ -33,22 +44,32 @@ def calculate_settlements(player_data):
         transfer = min(w['amount'], l['amount'])
         
         if transfer > 0:
-            settlements.append((l['name'], w['name'], transfer))
+            # Rounded to 2 decimal places for financial accuracy
+            settlements.append((l['name'], w['name'], round(float(transfer), 2)))
             
         # Update remaining amounts
         w['amount'] -= transfer
         l['amount'] -= transfer
         
         # Move to next if amount is settled
-        if w['amount'] == 0:
+        if w['amount'] <= 0:
             w_idx += 1
-        if l['amount'] == 0:
+        if l['amount'] <= 0:
             l_idx += 1
             
     return settlements
 
-def generate_venmo_link(handle, amount, note="Poker"):
-    # Venmo deep link format
-    # venmo://paycharge?txn=pay&recipients=Handle&amount=10&note=Poker
+def generate_venmo_link(handle: str, amount: float, note: str = "Poker") -> str:
+    """
+    Generates a Venmo deep link for a payment.
+
+    Args:
+        handle: The Venmo handle of the recipient (e.g., '@username').
+        amount: The dollar amount to pay.
+        note: The transaction note.
+
+    Returns:
+        A URL string formatted as a Venmo deep link.
+    """
     clean_handle = handle.replace('@', '')
-    return f"venmo://paycharge?txn=pay&recipients={clean_handle}&amount={amount}&note={note}"
+    return f"venmo://paycharge?txn=pay&recipients={clean_handle}&amount={amount:.2f}&note={note}"

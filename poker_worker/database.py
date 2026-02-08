@@ -1,12 +1,23 @@
-import boto3
+"""
+Adapter for DynamoDB interaction.
+Follows Single-Table Design patterns as defined in AGENTS.md.
+"""
+
 import os
 import logging
 import datetime
 from decimal import Decimal
+from typing import Any, Optional, List, Dict, Tuple
+
+import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
-def to_decimal(obj):
+def to_decimal(obj: Any) -> Any:
+    """
+    Recursively converts float values to Decimal for DynamoDB compatibility.
+    """
     if isinstance(obj, float):
         return Decimal(str(obj))
     if isinstance(obj, dict):
@@ -16,9 +27,11 @@ def to_decimal(obj):
     return obj
 
 class PokerDatabase:
+    """
+    Handles all persistent storage operations for the Poker Bot.
+    """
     def __init__(self):
         endpoint_url = os.environ.get("DYNAMODB_URL")
-        # For local DynamoDB, we must provide a region_name if not in env
         region_name = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
         
         if endpoint_url:
@@ -35,44 +48,62 @@ class PokerDatabase:
         self.table_name = os.environ["DYNAMODB_TABLE"]
         self.table = self.dynamodb.Table(self.table_name)
 
-    def register_user(self, slack_id, poker_name, venmo_handle):
+    def register_user(self, slack_id: str, poker_name: str, venmo_handle: str) -> bool:
+        """
+        Creates or updates a user profile.
+        
+        PK: USER#<slack_id>, SK: PROFILE
+        """
         try:
             self.table.put_item(
                 Item={
                     "PK": f"USER#{slack_id}",
                     "SK": "PROFILE",
                     "poker_name": poker_name,
-                    "venmo_handle": venmo_handle
+                    "venmo_handle": venmo_handle,
+                    "updated_at": datetime.datetime.utcnow().isoformat()
                 }
             )
             return True
-        except Exception as e:
-            logger.exception(f"Failed to register user {slack_id}")
+        except ClientError as e:
+            logger.error(f"Failed to register user {slack_id}: {e}")
             return False
 
-    def get_user_by_slack_id(self, slack_id):
+    def get_user_by_slack_id(self, slack_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a user's profile information.
+        """
         try:
             response = self.table.get_item(
                 Key={"PK": f"USER#{slack_id}", "SK": "PROFILE"}
             )
             return response.get("Item")
-        except Exception as e:
-            logger.exception(f"Failed to get user {slack_id}")
+        except ClientError as e:
+            logger.error(f"Failed to get user {slack_id}: {e}")
             return None
 
-    def get_all_users(self):
+    def get_all_users(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves all registered user profiles.
+        Note: Uses Scan, which is acceptable for small groups as per AGENTS.md.
+        """
         try:
             response = self.table.scan(
                 FilterExpression="begins_with(PK, :u) AND SK = :s",
                 ExpressionAttributeValues={":u": "USER#", ":s": "PROFILE"}
             )
             return response.get("Items", [])
-        except Exception as e:
-            logger.exception("Failed to scan users")
+        except ClientError as e:
+            logger.error(f"Failed to scan users: {e}")
             return []
 
-    def save_game(self, game_id, player_data, fingerprint, uploader_id):
-        """Stores a game record and updates player stats."""
+    def save_game(self, game_id: str, player_data: Dict[str, float], fingerprint: str, uploader_id: str) -> bool:
+        """
+        Stores a game record and updates individual player stats.
+        
+        Game: PK: GAME#<game_id>, SK: RESULT
+        Stats: PK: STATS#<lowercase_name>, SK: GAME#<game_id>
+        """
         now = datetime.datetime.utcnow().isoformat()
         try:
             # Save game record
@@ -86,10 +117,9 @@ class PokerDatabase:
                     "timestamp": now
                 })
             )
-            # Update individual player stats (simplified for now: store history)
+            
+            # Update individual player stats for auditing and leaderboard calculation
             for player_name, net in player_data.items():
-                # We'll store a history entry for each player to make leaderboard calculation easier
-                # In a high-traffic app we'd use atomic counters, but for this, history is better for auditing
                 self.table.put_item(
                     Item=to_decimal({
                         "PK": f"STATS#{player_name.lower().strip()}",
@@ -99,14 +129,15 @@ class PokerDatabase:
                     })
                 )
             return True
-        except Exception as e:
-            logger.exception(f"Failed to save game {game_id}")
+        except ClientError as e:
+            logger.error(f"Failed to save game {game_id}: {e}")
             return False
 
-    def get_recent_games(self, limit=5):
+    def get_recent_games(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Retrieves the most recent game results.
+        """
         try:
-            # This is a bit inefficient with Scan, but fine for a small group
-            # Ideally we'd have a GSI on SK and timestamp
             response = self.table.scan(
                 FilterExpression="SK = :s",
                 ExpressionAttributeValues={":s": "RESULT"}
@@ -114,32 +145,36 @@ class PokerDatabase:
             items = response.get("Items", [])
             items.sort(key=lambda x: x['timestamp'], reverse=True)
             return items[:limit]
-        except Exception as e:
-            logger.exception("Failed to get recent games")
+        except ClientError as e:
+            logger.error(f"Failed to get recent games: {e}")
             return []
 
-    def get_leaderboard(self):
+    def get_leaderboard(self) -> List[Tuple[str, float]]:
+        """
+        Calculates the all-time profit/loss leaderboard from player stats.
+        """
         try:
             response = self.table.scan(
                 FilterExpression="begins_with(PK, :p)",
                 ExpressionAttributeValues={":p": "STATS#"}
             )
             items = response.get("Items", [])
-            totals = {}
+            totals: Dict[str, float] = {}
             for item in items:
                 name = item['PK'].replace('STATS#', '')
                 amount = float(item['net_amount'])
-                totals[name] = totals.get(name, 0) + amount
+                totals[name] = totals.get(name, 0.0) + amount
             
             sorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)
             return sorted_totals
-        except Exception as e:
-            logger.exception("Failed to get leaderboard")
+        except ClientError as e:
+            logger.error(f"Failed to get leaderboard: {e}")
             return []
 
-    def save_poll_metadata(self, week_id, channel_id, message_ts, emoji_mapping):
+    def save_poll_metadata(self, week_id: str, channel_id: str, message_ts: str, emoji_mapping: Dict[str, str]) -> bool:
         """
-        Stores metadata for the weekly poll.
+        Stores metadata for the weekly scheduling poll.
+        
         PK: POLL#<week_id>, SK: METADATA
         """
         try:
@@ -149,15 +184,18 @@ class PokerDatabase:
                     "SK": "METADATA",
                     "channel_id": channel_id,
                     "message_ts": message_ts,
-                    "emoji_mapping": emoji_mapping  # Map of emoji_name -> Day (e.g., {"billnye": "Mon"})
+                    "emoji_mapping": emoji_mapping
                 }
             )
             return True
-        except Exception as e:
-            logger.exception(f"Failed to save poll metadata for {week_id}")
+        except ClientError as e:
+            logger.error(f"Failed to save poll metadata for {week_id}: {e}")
             return False
 
-    def get_poll_metadata(self, week_id):
+    def get_poll_metadata(self, week_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves metadata for a specific weekly poll.
+        """
         try:
             response = self.table.get_item(
                 Key={
@@ -166,11 +204,14 @@ class PokerDatabase:
                 }
             )
             return response.get("Item")
-        except Exception as e:
-            logger.exception(f"Failed to get poll metadata for {week_id}")
+        except ClientError as e:
+            logger.error(f"Failed to get poll metadata for {week_id}: {e}")
             return None
 
-    def get_poll(self, week_id):
+    def get_poll(self, week_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves the poll vote data.
+        """
         try:
             response = self.table.get_item(
                 Key={
@@ -179,6 +220,6 @@ class PokerDatabase:
                 }
             )
             return response.get("Item")
-        except Exception as e:
-            logger.exception(f"Failed to get poll {week_id}")
+        except ClientError as e:
+            logger.error(f"Failed to get poll {week_id}: {e}")
             return None
