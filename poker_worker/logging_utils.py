@@ -1,6 +1,8 @@
 import logging
 import os
 
+from pythonjsonlogger import jsonlogger
+
 _configured = False
 
 
@@ -14,14 +16,24 @@ def configure_logging():
         return
 
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-    log_format = "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
-
-    # Configure the root logger
-    logging.basicConfig(
-        level=log_level,
-        format=log_format,
-        force=True,  # Ensure this config overrides any previous one
+    # Using a custom JSON formatter to ensure multi-line tracebacks are logged as single entries
+    formatter = jsonlogger.JsonFormatter(
+        "%(asctime)s %(levelname)s %(name)s %(filename)s %(lineno)d %(message)s"
     )
+
+    # Configure the root logger to use the JSON formatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(log_level)
+
+    # Prevent duplicate logs from default handler if force=True isn't enough
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+
     _configured = True
 
 

@@ -3,10 +3,11 @@ services:
     command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
     image: "amazon/dynamodb-local:latest"
     container_name: dynamodb-local
-    network_mode: host
+
     volumes:
       - "./dynamodb:/home/dynamodblocal/data"
     working_dir: /home/dynamodblocal
+    network_mode: host
     healthcheck:
       test: ["CMD-SHELL", "java -jar DynamoDBLocal.jar -help || exit 1"]
       interval: 5s
@@ -27,6 +28,7 @@ services:
       - ..:/app
     network_mode: host
 
+
   bridge:
     build:
       context: ..
@@ -41,6 +43,7 @@ services:
     volumes:
       - ..:/app
     network_mode: host
+
 
   ngrok:
     image: ngrok/ngrok:latest
