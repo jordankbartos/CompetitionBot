@@ -67,25 +67,22 @@ Managed via AWS Secrets Manager and Terraform. Use `make secrets` to sync them l
 ## 🧪 Local Setup (Detailed)
 
 ### 1. Sync Secrets
+Fetch production configuration for local parity.
 ```bash
 make secrets
 ```
 
-### 2. Database Initialization
-```bash
-make init-db
-```
-
-### 3. Running the Local Stack
-Using Docker Compose:
+### 2. Running the Stack
+The easiest way to develop is using the Docker Compose stack, which handles DynamoDB initialization, the bridge server, and ngrok automatically.
 ```bash
 make local
 ```
 
-Or running the bridge manually:
-```bash
-python dev/local_bridge.py
-```
+### 3. Manual Development
+If you prefer to run components individually:
+1. Start DynamoDB: `docker-compose -f docker/docker-compose.yml up dynamodb-local`
+2. Initialize schema: `make init-db`
+3. Run bridge: `python dev/local_bridge.py`
 
 ### 4. Testing
 Run unit tests:

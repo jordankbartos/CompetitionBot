@@ -4,11 +4,12 @@ Utility functions for the Poker Bot worker.
 
 import ast
 import json
-import logging
 import os
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def get_env(var_name: str) -> Optional[Any]:

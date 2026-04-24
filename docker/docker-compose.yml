@@ -23,6 +23,8 @@ services:
         condition: service_healthy
     env_file: ../.env
     command: ["python", "scripts/init_local_db.py"]
+    volumes:
+      - ..:/app
     network_mode: host
 
   bridge:
@@ -45,8 +47,6 @@ services:
     container_name: poker-ngrok
     restart: always
     env_file: ../.env
-    environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     command:
       - "http"
       - "5000"

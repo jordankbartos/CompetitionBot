@@ -6,10 +6,10 @@ These tools are atomic and provide a bridge between the agent and domain service
 import datetime
 import hashlib
 import json
-import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from logging_utils import get_logger
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
@@ -18,7 +18,7 @@ from settlement import calculate_settlements as calc_splits
 from settlement import generate_venmo_link
 from utils import get_env
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 JORDAN_ID = "U85D9C8TV"
 

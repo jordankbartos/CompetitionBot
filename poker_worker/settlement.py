@@ -3,9 +3,9 @@ Domain logic for poker game settlements and external links.
 This module contains pure business logic and should not have external dependencies.
 """
 
-import logging
+from logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def calculate_settlements(player_data: dict[str, float]) -> list[tuple[str, str, float]]:

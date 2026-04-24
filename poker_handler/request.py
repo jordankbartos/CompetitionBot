@@ -2,20 +2,16 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
-import os
 import time
 import urllib.parse
 
 import boto3
+from logging_utils import get_logger
 
 from utils import get_secret
 
 # Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=LOG_LEVEL)
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL)
+logger = get_logger(__name__)
 
 try:
     WORKER_FUNCTION = get_secret("WORKER_FUNCTION_NAME")

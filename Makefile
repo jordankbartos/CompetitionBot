@@ -26,7 +26,7 @@ destroy:
 	bash scripts/destroy.sh
 
 local:
-	docker-compose -f docker/docker-compose.yml up
+	docker-compose -f docker/docker-compose.yml up --build
 
 up: local
 
@@ -40,7 +40,7 @@ init-db:
 	python3 scripts/init_local_db.py
 
 test:
-	python3 -m unittest discover tests
+	PYTHONPATH=poker_worker:poker_handler python3 -m unittest discover tests
 
 lint:
 	pre-commit run --all-files

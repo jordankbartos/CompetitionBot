@@ -16,6 +16,8 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 
 # Copy requirements and install
 COPY requirements-dev.txt .
+COPY poker_worker/requirements.txt ./poker_worker/
+COPY poker_handler/requirements.txt ./poker_handler/
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Copy the rest of the code

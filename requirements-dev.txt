@@ -1,8 +1,7 @@
+-r poker_worker/requirements.txt
+-r poker_handler/requirements.txt
 flask>=3.0.0
 boto3>=1.36
-google-generativeai==0.8.3
-slack_sdk==3.31.0
-requests>=2.32.0
 python-dotenv>=1.0.1
 pre-commit>=4.0.0
 black>=24.0.0

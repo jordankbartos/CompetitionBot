@@ -1,20 +1,19 @@
 import datetime
-import logging
 import os
 import random
 
 from config import POKER_EMOJIS
+from logging_utils import get_logger
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from database import PokerDatabase
-from utils import get_env
 
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logger = logging.getLogger(__name__)
-logger.setLevel(log_level)
+# Logging configuration
+logger = get_logger(__name__)
 
-target_channel = get_env("POKER_CHANNEL") or "poker"
+
+target_channel = "testbots"  # get_env("POKER_CHANNEL") or "pokerrrr"
 db = PokerDatabase()
 
 
@@ -32,7 +31,7 @@ def handle_event_bridge_trigger(event, context):
     poll_text = (
         f"*Weekly Poker Poll (week of {week_label})*\nWhich day works best for a game this week?\n"
     )
-    for day, emoji in emoji_mapping.items():
+    for emoji, day in emoji_mapping.items():
         poll_text += f":{emoji}: {day}\n"
 
     if not (response := _try_post_message(slack_client, channel_id, poll_text)):

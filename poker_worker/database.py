@@ -4,15 +4,15 @@ Follows Single-Table Design patterns as defined in AGENTS.md.
 """
 
 import datetime
-import logging
 import os
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
+from logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def to_decimal(obj: Any) -> Any:

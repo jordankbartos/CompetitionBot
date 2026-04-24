@@ -3,32 +3,33 @@ Main orchestrator for the Poker Bot worker.
 Handles Slack events, manages agent conversations, and coordinates tools.
 """
 
+import asyncio
+import base64
 import json
-import logging
-import os
 import re
 from typing import Any, Dict, Optional
 
 import agent_tools
-import google.generativeai as genai
 from config import MODEL_NAME, SYSTEM_PROMPT
 from event_bridge_trigger import handle_event_bridge_trigger
+from google.adk.agents import Agent
+from google.adk.models.google_llm import Gemini
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai.types import Content, Part
+from logging_utils import get_logger
 from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 
 from database import PokerDatabase
 from utils import get_env
-from vision import download_slack_image, process_poker_screenshot
+from vision import download_slack_image
 
 # Logging configuration
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=log_level)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Core instances
 google_api_key = get_env("GOOGLE_API_KEY")
-if google_api_key:
-    genai.configure(api_key=google_api_key)
+
 
 slack_token = get_env("SLACK_BOT_TOKEN") or ""
 client = WebClient(token=slack_token)
@@ -55,6 +56,52 @@ available_tools = [
 ]
 
 
+def img_bytes_to_part(image_data: bytes):
+    # 1. Check if this is a Data URL bytes object
+    if image_data.startswith(b"data:"):
+        print(1)
+        header, base64_part = image_data.split(b",", 1)
+        raw_bytes = base64.b64decode(base64_part)
+    # 2. Check if it's already raw PNG or JPEG binary
+    elif image_data.startswith(b"\x89PNG") or image_data.startswith(b"\xff\xd8"):
+        print(2)
+        raw_bytes = image_data
+    # 3. Fallback: Assume it's a raw base64 bytes object without a header
+    else:
+        print(3)
+        try:
+            print(4)
+            raw_bytes = base64.b64decode(image_data)
+        except Exception:
+            print(5)
+            # If decoding fails, it might just be a raw format we don't recognize
+            raw_bytes = image_data
+
+    # Detect mime_type for the API
+    m_type = "image/png" if raw_bytes.startswith(b"\x89PNG") else "image/jpeg"
+
+    return Part.from_bytes(data=raw_bytes, mime_type=m_type)
+
+
+async def get_agent_response(agent, prompt, image_bytes):
+    final_text = ""
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(app_name="PokerBot", user_id="slack_user")
+    runner = Runner(app_name="PokerBot", agent=agent, session_service=session_service)
+    # Wrap the prompt into a Content object
+    parts = [Part(text=prompt)]
+    if image_bytes:
+        print(f"{image_bytes[:200]=}")
+        image_part = img_bytes_to_part(image_bytes)
+        parts.append(image_part)
+    user_content = Content(role="user", parts=parts)
+    events = runner.run_async(user_id="slack_user", session_id=session.id, new_message=user_content)
+    async for event in events:
+        if event.is_final_response() and event.content:
+            final_text = event.content.parts[0].text
+    return final_text
+
+
 def handle_agentic_conversation(event_data: Dict[str, Any]) -> None:
     """
     Manages a multi-step conversation with the Gemini agent.
@@ -69,35 +116,31 @@ def handle_agentic_conversation(event_data: Dict[str, Any]) -> None:
     logger.info(f"Processing message from {user_id} in {channel}")
 
     # 1. Image Processing (Vision)
-    vision_data = None
     files = event_data.get("files", [])
     if files:
         file_url = files[0].get("url_private", "")
         image_bytes = download_slack_image(file_url, slack_token)
-        if image_bytes:
-            # Signal processing with a reaction
-            try:
-                client.reactions_add(channel=channel, timestamp=ts, name="eyes")
-            except SlackApiError:
-                pass
+    else:
+        image_bytes = None
 
-            extracted_data = process_poker_screenshot(image_bytes)
-            if extracted_data:
-                vision_data = _normalize_vision_results(extracted_data)
-
-    # 2. Agent Orchestration
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME, system_instruction=SYSTEM_PROMPT, tools=available_tools
+    gemini_model = Gemini(
+        model=MODEL_NAME,
+        api_key=google_api_key,
+    )
+    agent = Agent(
+        name="PokerBot", model=gemini_model, instruction=SYSTEM_PROMPT, tools=available_tools
     )
 
-    prompt = _construct_agent_prompt(user_id, text, channel, thread_ts, vision_data)
-    chat = model.start_chat(enable_automatic_function_calling=True)
+    prompt = _construct_agent_prompt(
+        user_id, text, channel, thread_ts
+    )  # , image_bytes)#vision_data)
 
     try:
-        response = chat.send_message(prompt)
+        response_text = asyncio.run(get_agent_response(agent, prompt, image_bytes))
+        print(f"{response_text=}")
         # Slack replies should usually stay in the same thread if one exists
         reply_ts = thread_ts if thread_ts else None
-        client.chat_postMessage(channel=channel, text=response.text, thread_ts=reply_ts)
+        client.chat_postMessage(channel=channel, text=response_text, thread_ts=reply_ts)
     except Exception:
         logger.exception("Agent conversation failed")
         client.chat_postMessage(
@@ -126,18 +169,12 @@ def _construct_agent_prompt(
     text: str,
     channel: str,
     thread_ts: Optional[str],
-    vision_data: Optional[Dict[str, Any]],
 ) -> str:
     """Builds the contextual prompt for the agent."""
     prompt = (
         f"Context: channel_id={channel}, thread_ts={thread_ts or 'None'}\n"
         f"User <@{user_id}> says: {text}\n"
     )
-    if vision_data:
-        players = vision_data.get("players", {})
-        formatted_results = [{"name": k, "amount": v} for k, v in players.items()]
-        prompt += f"\nI have extracted the following from the attached screenshot (in dollars): {json.dumps(formatted_results)}\n"
-        prompt += "If this data is correct and the user wants to settle or record the results, use the tools to do so."
     return prompt
 
 

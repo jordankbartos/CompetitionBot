@@ -1,9 +1,10 @@
 import ast
 import json
-import logging
 import os
 
-logger = logging.getLogger(__name__)
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def _parse_secret_value(val):

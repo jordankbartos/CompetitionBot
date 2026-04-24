@@ -4,14 +4,19 @@ Uses Gemini Vision API to parse results.
 """
 
 import json
-import logging
 from typing import Any, Dict, Optional
 
-import google.generativeai as genai
 import requests
 from config import MODEL_NAME, VISION_PROMPT
+from google import genai
+from google.genai.types import Content, Part
+from logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+from utils import get_env
+
+google_api_key = get_env("GOOGLE_API_KEY")
+
+logger = get_logger(__name__)
 
 
 def download_slack_image(url: str, token: str) -> Optional[bytes]:
@@ -36,13 +41,22 @@ def process_poker_screenshot(image_content: bytes) -> Optional[Dict[str, Any]]:
     Returns:
         A dictionary containing extracted player data, or None if extraction fails.
     """
-    model = genai.GenerativeModel(MODEL_NAME)
+    print("VISION TOOL")
+    client = genai.Client(vertexai=False, api_key=google_api_key)
+    system_prompt = Content(role="system", parts=[Part(text=VISION_PROMPT)])
+    image_part = Part.from_bytes(data=image_content, mime_type="image/png")
+    user_prompt = Content(role="user", parts=[image_part])
 
     try:
-        response = model.generate_content(
-            [VISION_PROMPT, {"mime_type": "image/png", "data": image_content}],
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[system_prompt, user_prompt],
             generation_config={"response_mime_type": "application/json"},
         )
+        # response = model.generate_content(
+        #    [VISION_PROMPT, {"mime_type": "image/png", "data": image_content}],
+        #    generation_config={"response_mime_type": "application/json"},
+        # )
         logger.debug(f"Vision API raw output: {response.text}")
 
         data = json.loads(response.text)

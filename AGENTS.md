@@ -1,6 +1,6 @@
 # 🤖 AGENTS.md
 
-This guide is for agentic coding agents (like yourself) working in the PokerBot repository. Adhere to these standards to ensure consistency and safety.
+This guide is for agentic coding agents (like yourself) working in the PokerBot repository. Adhere to these standards to ensure consistency, testability, and safety.
 
 ## 🛠 Project Commands
 
@@ -10,72 +10,70 @@ We use a `Makefile` to centralize common tasks. Prefer these commands over calli
 - **Build Package:** `make build` (Calls `scripts/build.sh`, uses Docker for binary compatibility).
 - **Deploy to AWS:** `make deploy` (Runs Terraform from `infra/`).
 - **Destroy Infra:** `make destroy` (Runs Terraform destroy).
-- **CRITICAL:** All dependencies with C-extensions (e.g., `grpcio`, `cryptography`) **MUST** be built using the Dockerized environment in `build.sh`. Never run `pip install` directly for deployment purposes. `boto3` is provided by the Lambda runtime; do not include it in `requirements.txt`.
+- **CRITICAL:** Dependencies with C-extensions MUST be built using the Dockerized environment in `build.sh`. Never run `pip install` directly for deployment.
 
 ### Local Development
-- **Environment:** Development is managed with **Conda** (env: `slackbot`). Verify the environment is active before starting work.
-- **Initialize DB:** `make init-db` (Calls `scripts/init_local_db.py`).
-- **Start Local Bridge:** `python dev/local_bridge.py` (Flask server mimicking AWS Lambda).
-- **Docker Compose:** `make local` (Runs `docker-compose -f docker/docker-compose.yml up`). Includes `dynamodb-local`, `bridge`, and `ngrok`.
-- **Fetch Secrets:** `make secrets` (Pulls production values for local testing into `.env`).
-- **Trigger Poll:** `curl -X POST http://localhost:5000/trigger-poll` (Manually fires the scheduler).
+- **Environment:** Development is managed with **Conda** (env: `slackbot`).
+- **Run Everything:** `make local` (Runs `docker-compose` for DynamoDB, schema, bridge, ngrok).
+- **Start Local Bridge:** `python dev/local_bridge.py`
+- **Fetch Secrets:** `make secrets` (Pulls prod values into `.env`).
+- **Trigger Poll:** `curl -X POST http://localhost:5000/trigger-poll`
 
-### Testing Strategy
-- **Unit Tests:** `make test` (Runs `python3 -m unittest discover tests`). Focus on domain logic (e.g., `settlement.py`).
-- **Integration Tests:** Test the interaction between domain logic and the database wrapper. Use DynamoDB Local or the Docker Compose stack.
-- **Mocking:** Use `unittest.mock` to mock Slack API calls or Gemini AI responses.
-- **Test Discovery:** Ensure all tests are in the `tests/` directory and follow the `test_*.py` naming pattern.
-- **Continuous Verification:** After making changes, run `ruff check .` to ensure no linting regressions.
+### 🧪 Testing Strategy & Agentic TDD
+Agents must follow Test-Driven Development (TDD) workflows. Write failing tests first to establish clear requirements before modifying business logic.
+
+- **Run All Tests:** `make test` (Runs `python3 -m unittest discover tests`).
+- **Run a Single Test Class:** `python3 -m unittest tests.test_settlement.TestSettlement`
+- **Run a Specific Test Method:** `python3 -m unittest tests.test_settlement.TestSettlement.test_even_split`
+- **Linting & Types:** `ruff check .` (Must pass without warnings after changes).
+
+**Test Quality Requirements:**
+- **Meaningful Assertions:** Tests must validate real domain constraints. Trivial tests (e.g., `assert 3 == 3` or testing standard library features) are strictly forbidden.
+- **Mocking:** Use `unittest.mock` strictly for boundaries (Slack API, Gemini API, DB wrappers). Never mock domain logic.
+- **Isolation:** Tests must not depend on global state or execution order.
 
 ---
 
-## 🎨 Project Structure
+## 🏗 Architectural Patterns
 
-- **`poker_handler/`**: Lightweight entry point (Security & Fast-Ack).
-- **`poker_worker/`**: Core orchestrator and agent logic.
-- **`domain/`**: Pure business logic (currently inside `poker_worker/` as `settlement.py`).
-- **`infra/`**: Terraform configuration and state.
-- **`dev/`**: Local development utilities (bridge, zip tools).
-- **`docker/`**: Docker Compose and Dockerfile for local development.
-- **`scripts/`**: Build, deployment, and database utility scripts.
+This project follows **Clean Architecture**:
+- **Domain:** Pure business logic (`domain/` or `settlement.py`). **No external dependencies allowed.**
+- **Adapters:** External boundary interfaces (`agent_tools.py`, `database.py`).
+- **Infrastructure:** AWS Lambda handlers, DynamoDB clients, Slack SDK.
+- **Dependency Injection:** Pass dependencies/data as arguments; avoid hardcoding global instances.
 
 ---
 
 ## 🎨 Code Style & Philosophy
 
-### Clean Code Principles
-- **Self-Documenting Code:** Prioritize clarity in naming and structure. If the code is hard to read, refactor it.
-- **Single Responsibility Principle (SRP):** Every module, class, and function must have exactly one reason to change.
-- **Descriptive Naming:** Use highly descriptive names. Avoid abbreviations unless standard.
-- **Avoid Comments:** Do not explain *what* the code is doing. Only explain *why* for non-obvious decisions.
-- **Dry (Don't Repeat Yourself):** Abstract common logic. Avoid "WET" code.
-- **Formatting:** Adhere to `ruff` default style.
+### 1. Common Sense & Clean Code
+- **KISS & SRP:** Keep it simple. Every function, class, and module must have a Single Responsibility. If a function is doing two things, split it.
+- **DRY:** Abstract repeated logic cleanly, but prioritize readability over premature optimization.
+- **Function Scope & Length:** Functions should be small (ideally < 20 lines) and operate at a single level of abstraction.
+- **Self-Documenting Code:** Rely on descriptive, explicit naming (`calculate_user_debt()` over `calc_ud()`).
+- **No Junk Comments:** Do not write comments explaining *what* code does (the code should tell you that). Only use comments to explain *why* a specific, non-obvious technical decision was made.
 
-### Python Conventions (Target: 3.12)
-- **Formatting:** 4 spaces per indent. Max line length: 100 characters.
-- **Naming:** `snake_case` for vars/funcs, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants.
-- **Typing:** Use Python type hints for all new functions.
-- **Imports:** 1. Standard, 2. Third-party, 3. Local. Use absolute imports.
-- **Docstrings:** Use triple quotes `"""` with Google-style documentation for all public functions and classes.
+### 2. Functional Programming Practices
+Maximize testability and maintainability by utilizing functional paradigms where possible:
+- **Pure Functions:** Functions should avoid side effects and always return the same output for a given input. Keep domain logic functionally pure.
+- **Immutability:** Avoid mutating arguments in-place. Prefer returning new data structures (e.g., list comprehensions, copies).
+- **Data over Objects:** Prefer simple `dataclasses`, `NamedTuples`, or standard dicts for data transfer rather than heavy stateful object instances.
 
----
-
-## 🏗 Architectural Patterns & Clean Architecture
-
-### Reusability and Extensibility
-The codebase follows **Clean Architecture**:
-- **Infrastructure:** AWS Lambda handlers, DynamoDB client, Slack SDK.
-- **Adapters:** `agent_tools.py` and `database.py`.
-- **Domain:** Pure business logic (e.g., `settlement.py`). **No external dependencies allowed here.**
-- **Decoupling:** Business logic must not know about Slack or AWS.
-- **Dependency Injection:** Pass dependencies into functions rather than hardcoding global instances.
+### 3. Python 3.12 Conventions
+- **Formatting:** 4 spaces per indent. Max line length: 100 characters. Adhere to `ruff` standard formatting.
+- **Naming:**
+  - `snake_case` for variables and functions.
+  - `PascalCase` for classes.
+  - `UPPER_SNAKE_CASE` for constants.
+- **Typing:** Explicit type hints are mandatory for all new function arguments and return types.
+- **Imports:** 1. Standard Library, 2. Third-party, 3. Local/Project. Use absolute imports.
+- **Error Handling:** Avoid silent failures. Catch specific exceptions, not broad `Exception` blocks. Log errors with context and re-raise if the function cannot handle them meaningfully. Use `try...except` generously around external IO boundaries.
 
 ---
 
-## 💡 Agent Instructions
-1. **Be Proactive:** If you add a new database field, update `PokerDatabase` and `agent_tools.py`.
-2. **Consult Docs:** Always read `DEVELOPER.md` before making architectural changes.
-3. **Git Hygiene:** NEVER commit or push changes automatically.
-4. **Safety:** Never hardcode secrets. Use `utils.get_env()`.
-5. **Idempotency:** Ensure game recording is idempotent using fingerprints.
-6. **Error Handling:** Use `try...except` around external calls and log with context.
+## 💡 Workflow Mandates for Agents
+1. **Think First:** Consult this document and `DEVELOPER.md` before making architectural changes.
+2. **TDD Loop:** Red -> Green -> Refactor. Write the test, make it pass, run `ruff check .`, refactor.
+3. **Safety First:** NEVER commit secrets. Use `utils.get_env()`.
+4. **Git Hygiene:** Only commit when explicitly asked by the user. Do not push automatically.
+5. **Idempotency:** Ensure database and external state operations are idempotent.
