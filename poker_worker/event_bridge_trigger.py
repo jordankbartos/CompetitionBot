@@ -4,7 +4,8 @@ import random
 import time
 from typing import Dict, Optional
 
-from config import POKER_EMOJIS
+from ai_news import post_ai_news_digest
+from config import AI_CHANNEL_ID, POKER_EMOJIS
 from logging_utils import get_logger
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -41,6 +42,9 @@ def handle_event_bridge_trigger(event, context):
     response = _try_post_message(slack_client, channel_id, poll_text)
     if not response:
         logger.error("handle_event_bridge_trigger: Failed to post poll message to Slack.")
+        _try_post_message(
+            slack_client, channel_id, ":x: Weekly poker poll failed to post. Check the logs."
+        )
         return {"statusCode": 500, "body": "Failed to send poll"}
 
     message_ts = response["ts"]
@@ -55,6 +59,28 @@ def handle_event_bridge_trigger(event, context):
     # 4. Save metadata to DB
     db.save_poll_metadata(week_id, channel_id, message_ts, emoji_mapping)
     logger.info("handle_event_bridge_trigger: Poll sent and metadata saved successfully.")
+
+    # 5. Post AI news digest — runs independently; failure does not affect poll result
+    try:
+        success = post_ai_news_digest(
+            slack_client=slack_client,
+            google_api_key=os.environ["GOOGLE_API_KEY"],
+            channel_id=AI_CHANNEL_ID,
+        )
+        if not success:
+            _try_post_message(
+                slack_client,
+                AI_CHANNEL_ID,
+                ":x: Weekly AI news digest failed to generate. Check the logs.",
+            )
+    except Exception:
+        logger.exception("handle_event_bridge_trigger: AI news digest failed (non-fatal)")
+        _try_post_message(
+            slack_client,
+            AI_CHANNEL_ID,
+            ":x: Weekly AI news digest failed to generate. Check the logs.",
+        )
+
     return {"statusCode": 200, "body": "Poll sent"}
 
 

@@ -70,8 +70,8 @@ class PokerDatabase:
                 }
             )
             return True
-        except ClientError as e:
-            logger.error(f"Failed to register user {slack_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to register user {slack_id}")
             return False
 
     def get_user_by_slack_id(self, slack_id: str) -> Optional[Dict[str, Any]]:
@@ -81,8 +81,8 @@ class PokerDatabase:
         try:
             response = self.table.get_item(Key={"PK": f"USER#{slack_id}", "SK": "PROFILE"})
             return response.get("Item")
-        except ClientError as e:
-            logger.error(f"Failed to get user {slack_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to get user {slack_id}")
             return None
 
     def get_all_users(self) -> List[Dict[str, Any]]:
@@ -96,8 +96,8 @@ class PokerDatabase:
                 ExpressionAttributeValues={":u": "USER#", ":s": "PROFILE"},
             )
             return response.get("Items", [])
-        except ClientError as e:
-            logger.error(f"Failed to scan users: {e}")
+        except ClientError:
+            logger.exception("Failed to scan users")
             return []
 
     def save_game(
@@ -138,8 +138,8 @@ class PokerDatabase:
                     )
                 )
             return True
-        except ClientError as e:
-            logger.error(f"Failed to save game {game_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to save game {game_id}")
             return False
 
     def get_recent_games(self, limit: int = 5) -> List[Dict[str, Any]]:
@@ -153,8 +153,8 @@ class PokerDatabase:
             items = response.get("Items", [])
             items.sort(key=lambda x: x["timestamp"], reverse=True)
             return items[:limit]
-        except ClientError as e:
-            logger.error(f"Failed to get recent games: {e}")
+        except ClientError:
+            logger.exception("Failed to get recent games")
             return []
 
     def get_leaderboard(self) -> List[Tuple[str, float]]:
@@ -174,8 +174,8 @@ class PokerDatabase:
 
             sorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)
             return sorted_totals
-        except ClientError as e:
-            logger.error(f"Failed to get leaderboard: {e}")
+        except ClientError:
+            logger.exception("Failed to get leaderboard")
             return []
 
     def save_poll_metadata(
@@ -197,8 +197,8 @@ class PokerDatabase:
                 }
             )
             return True
-        except ClientError as e:
-            logger.error(f"Failed to save poll metadata for {week_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to save poll metadata for {week_id}")
             return False
 
     def get_poll_metadata(self, week_id: str) -> Optional[Dict[str, Any]]:
@@ -208,9 +208,131 @@ class PokerDatabase:
         try:
             response = self.table.get_item(Key={"PK": f"POLL#{week_id}", "SK": "METADATA"})
             return response.get("Item")
-        except ClientError as e:
-            logger.error(f"Failed to get poll metadata for {week_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to get poll metadata for {week_id}")
             return None
+
+    def delete_game(self, game_id: str) -> bool:
+        """
+        Deletes a game record and all associated player stats entries.
+
+        Removes: PK: GAME#<game_id> SK: RESULT
+                 PK: STATS#<name>   SK: GAME#<game_id>  (for every player in the game)
+        """
+        try:
+            game_pk = f"GAME#{game_id}"
+            game_sk = "RESULT"
+
+            # Fetch the game first to know which player stats to remove
+            response = self.table.get_item(Key={"PK": game_pk, "SK": game_sk})
+            item = response.get("Item")
+            player_names = list(item["player_data"].keys()) if item else []
+
+            # Delete the game record
+            self.table.delete_item(Key={"PK": game_pk, "SK": game_sk})
+
+            # Delete each player's stat entry for this game
+            for name in player_names:
+                self.table.delete_item(
+                    Key={"PK": f"STATS#{name.lower().strip()}", "SK": f"GAME#{game_id}"}
+                )
+
+            logger.info(f"Deleted game {game_id} and {len(player_names)} stat entries.")
+            return True
+        except ClientError:
+            logger.exception(f"Failed to delete game {game_id}")
+            return False
+
+    def rename_player_across_all_games(self, old_name: str, new_name: str) -> Dict[str, int]:
+        """
+        Renames a player across every GAME record and all STATS entries.
+
+        For each GAME#* RESULT record that contains old_name in player_data:
+          - Merges old_name's amount into new_name (additive if new_name already exists).
+          - Removes old_name from the record.
+          - Overwrites the GAME record.
+          - Deletes STATS#<old_name> SK: GAME#<game_id>.
+          - Writes/merges STATS#<new_name> SK: GAME#<game_id>.
+
+        Returns:
+            {"games_updated": N, "stats_updated": N}
+        """
+        old_key = old_name.lower().strip()
+        new_key = new_name.lower().strip()
+        games_updated = 0
+        stats_updated = 0
+
+        try:
+            # Scan all GAME RESULT records
+            response = self.table.scan(
+                FilterExpression="SK = :s",
+                ExpressionAttributeValues={":s": "RESULT"},
+            )
+            game_items = response.get("Items", [])
+
+            for item in game_items:
+                player_data: Dict[str, Any] = dict(item.get("player_data", {}))
+
+                # Normalise keys for comparison but preserve original casing for lookup
+                matches = [k for k in player_data if k.lower().strip() == old_key]
+                if not matches:
+                    continue
+
+                game_id = item["PK"].replace("GAME#", "")
+                now = item.get("timestamp", "")
+
+                # Merge all matching old-name amounts into new_name
+                for old_match in matches:
+                    amount = float(player_data.pop(old_match))
+                    existing = next(
+                        (v for k, v in player_data.items() if k.lower().strip() == new_key),
+                        None,
+                    )
+                    if existing is not None:
+                        # new_name already in this game — add amounts
+                        new_match = next(k for k in player_data if k.lower().strip() == new_key)
+                        player_data[new_match] = float(player_data[new_match]) + amount
+                    else:
+                        player_data[new_name] = amount
+
+                # Overwrite the GAME record with updated player_data
+                self.table.put_item(
+                    Item=to_decimal(
+                        {
+                            **item,
+                            "player_data": player_data,
+                        }
+                    )
+                )
+
+                # Delete old STATS entry, write new one
+                self.table.delete_item(Key={"PK": f"STATS#{old_key}", "SK": f"GAME#{game_id}"})
+                new_amount = float(
+                    next(v for k, v in player_data.items() if k.lower().strip() == new_key)
+                )
+                self.table.put_item(
+                    Item=to_decimal(
+                        {
+                            "PK": f"STATS#{new_key}",
+                            "SK": f"GAME#{game_id}",
+                            "net_amount": new_amount,
+                            "timestamp": now,
+                        }
+                    )
+                )
+
+                games_updated += 1
+                stats_updated += 1
+
+            logger.info(
+                f"rename_player_across_all_games: '{old_name}' -> '{new_name}', "
+                f"games_updated={games_updated}, stats_updated={stats_updated}"
+            )
+            return {"games_updated": games_updated, "stats_updated": stats_updated}
+
+        except ClientError:
+            logger.exception(f"Failed to rename player '{old_name}' -> '{new_name}'")
+            return {"games_updated": 0, "stats_updated": 0}
 
     def get_poll(self, week_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -219,6 +341,6 @@ class PokerDatabase:
         try:
             response = self.table.get_item(Key={"PK": f"POLL#{week_id}", "SK": "VOTES"})
             return response.get("Item")
-        except ClientError as e:
-            logger.error(f"Failed to get poll {week_id}: {e}")
+        except ClientError:
+            logger.exception(f"Failed to get poll {week_id}")
             return None

@@ -19,7 +19,7 @@ graph TD
     Handler -->|3. Async Invoke| Worker[poker_worker Lambda]
 
     Worker -->|Read/Write| DynamoDB[(Amazon DynamoDB)]
-    Worker -->|Image Analysis| Gemini[Google Gemini AI]
+    Worker -->|LLM Calls| Gemini[Google Gemini AI]
     Worker -->|Post Message| Slack
 
     EventBridge[AWS EventBridge] -->|Scheduled Trigger| Worker
@@ -27,65 +27,136 @@ graph TD
 
 ### Components
 
-1.  **poker_handler (Lambda):**
-    - Responsible for signature verification (security).
-    - Handles the Slack "challenge" during app setup.
-    - Asynchronously invokes the `poker_worker`.
-2.  **poker_worker (Lambda):**
-    - The "brain" of the bot.
-    - Manages agentic conversations and dispatches tools.
-3.  **DynamoDB:**
-    - Single-table design (PK/SK).
-    - `PK: USER#<slack_id>`, `SK: PROFILE`: User data.
-    - `PK: GAME#<game_id>`, `SK: RESULT`: Game records.
-    - `PK: STATS#<name>`, `SK: GAME#<game_id>`: Player history.
-4.  **Google Gemini:**
-    - Multimodal Vision for parsing screenshots and NLP for the bot agent.
+1. **poker_handler (Lambda):** Signature verification, Slack challenge handling, async worker invocation.
+2. **poker_worker (Lambda):** The "brain" of the bot — runs the PokerCoordinator agent graph.
+3. **DynamoDB:** Single-table design (PK/SK). See schema below.
+4. **Google Gemini:** Powers all agents via Google ADK.
 
 ---
 
-## 🧠 Core Logic & Design Decisions
+## 🧠 Agent Architecture
 
-### Settlement Algorithm (`settlement.py`)
-The bot uses a "Greedy Settlement" approach to minimize the number of transactions between players.
+The bot uses **Google ADK** with a coordinator + sub-agents pattern.
 
-### Vision Processing (`vision.py`)
-Uses **Gemini Vision** to extract structured JSON from Pokerrrr 2 screenshots, converting raw units (cents) into dollars.
+```
+PokerCoordinator (LlmAgent, root)
+│   Routes each incoming message to the correct specialist sub-agent.
+│
+├── SettlementAgent (LlmAgent)
+│   │   Handles fresh screenshots AND game corrections.
+│   │
+│   └── SettlementPipeline (SequentialAgent, used as AgentTool)
+│       ├── VisionStep        — parse screenshot → raw player amounts
+│       ├── NameResolverStep  — fuzzy-match names to registered players
+│       ├── CalculateStep     — deterministic debt calculation
+│       ├── PersistStep       — save to DB; handles dup/Jordan-auth logic
+│       └── FormatStep        — produce final Slack-formatted message
+│
+├── LeaderboardAgent (LlmAgent)
+│       Read-only: get_poker_leaderboard, get_user_profile
+│
+└── ChatAgent (LlmAgent)
+        Catch-all: registration, poll results, general conversation,
+        file downloads, Slack search (when action_token is present)
+```
 
-### Local Development Bridge (`dev/local_bridge.py`)
-A Flask-based bridge that mimics AWS Lambda locally, allowing for rapid testing with **ngrok** and **DynamoDB Local**.
+**Routing logic:**
+- Image attached OR settlement/payment/correction language → `SettlementAgent`
+- Leaderboard / stats / ranking questions → `LeaderboardAgent`
+- Everything else → `ChatAgent`
+
+**EventBridge poll posting** runs entirely outside the agent graph — pure deterministic logic in `event_bridge_trigger.py`. No LLM involved.
+
+### Future compatibility
+`build_poker_coordinator(deps)` returns a standalone `LlmAgent`. All dependencies are injected (no module-level singletons inside agents). This agent can be slotted into a parent workspace-level agent's `sub_agents` list without any internal changes.
+
+---
+
+## 📁 Module Layout
+
+```
+poker_worker/
+├── slack_bot.py                # Lambda entry: builds coordinator, runs it
+├── event_bridge_trigger.py     # Deterministic weekly poll posting (no agent)
+├── config.py                   # Constants + per-agent instruction strings
+├── database.py                 # DynamoDB adapter (PokerDatabase)
+├── settlement.py               # Pure domain: greedy debt algorithm + Venmo links
+├── vision.py                   # Slack image download helper
+├── utils.py                    # get_env() secret helper
+├── logging_utils.py            # JSON structured logger
+│
+├── agents/
+│   ├── coordinator.py          # build_poker_coordinator(deps) → LlmAgent
+│   ├── settlement_agent.py     # build_settlement_agent(deps) → LlmAgent
+│   ├── settlement_pipeline.py  # build_settlement_pipeline(deps) → SequentialAgent
+│   ├── leaderboard_agent.py    # build_leaderboard_agent(deps) → LlmAgent
+│   └── chat_agent.py           # build_chat_agent(deps) → LlmAgent
+│
+└── tools/
+    ├── profile.py              # get_user_profile, register_player_venmo
+    ├── settlement_tools.py     # calculate_poker_settlements, record_game_result,
+    │                           #   find_recent_game, overwrite_game_result,
+    │                           #   delete_game_result
+    ├── leaderboard.py          # get_poker_leaderboard
+    ├── slack_tools.py          # slack_recent_channel_history, slack_react,
+    │                           #   create_slack_search_tool, get_file_contents,
+    │                           #   is_bot_in_thread
+    └── poll.py                 # get_weekly_poll_results
+```
+
+---
+
+## 🗄 DynamoDB Schema
+
+Single-table design (PK/SK):
+
+| PK | SK | Purpose |
+|---|---|---|
+| `USER#<slack_id>` | `PROFILE` | Player registration |
+| `GAME#<game_id>` | `RESULT` | Full game record with fingerprint |
+| `STATS#<name>` | `GAME#<game_id>` | Per-player per-game net for leaderboard |
+| `POLL#<week_id>` | `METADATA` | Weekly poll channel/ts/emoji mapping |
 
 ---
 
 ## ⚙️ Configuration
 
-### Environment Variables
-Managed via AWS Secrets Manager and Terraform. Use `make secrets` to sync them locally to a `.env` file.
+All per-agent instruction strings live in `config.py`:
+
+| Constant | Used by |
+|---|---|
+| `BASE_PERSONALITY` | Shared prefix for all agent instructions |
+| `COORDINATOR_INSTRUCTION` | PokerCoordinator routing rules |
+| `SETTLEMENT_AGENT_INSTRUCTION` | SettlementAgent |
+| `VISION_STEP_INSTRUCTION` | VisionStep (SequentialAgent) |
+| `NAME_RESOLVER_STEP_INSTRUCTION` | NameResolverStep |
+| `PERSIST_STEP_INSTRUCTION` | PersistStep |
+| `FORMAT_STEP_INSTRUCTION` | FormatStep |
+| `LEADERBOARD_AGENT_INSTRUCTION` | LeaderboardAgent |
+| `CHAT_AGENT_INSTRUCTION` | ChatAgent |
+
+Environment variables are managed via AWS Secrets Manager and Terraform. Use `make secrets` to sync them locally.
 
 ---
 
-## 🧪 Local Setup (Detailed)
+## 🧪 Local Setup
 
 ### 1. Sync Secrets
-Fetch production configuration for local parity.
 ```bash
 make secrets
 ```
 
 ### 2. Running the Stack
-The easiest way to develop is using the Docker Compose stack, which handles DynamoDB initialization, the bridge server, and ngrok automatically.
 ```bash
 make local
 ```
 
 ### 3. Manual Development
-If you prefer to run components individually:
 1. Start DynamoDB: `docker-compose -f docker/docker-compose.yml up dynamodb-local`
 2. Initialize schema: `make init-db`
 3. Run bridge: `python dev/local_bridge.py`
 
 ### 4. Testing
-Run unit tests:
 ```bash
 make test
 ```
@@ -100,13 +171,12 @@ curl -X POST http://localhost:5000/trigger-poll
 ## 🚢 CI/CD & Deployment
 
 ### Packaging
-Lambdas are packaged using `make build`. This uses a Docker container to ensure binary compatibility for dependencies.
+```bash
+make build
+```
 
 ### Terraform
-Managed in the `infra/` directory. Deploy with `make deploy`.
 ```bash
 make deploy
-```
-```bash
 make destroy
 ```

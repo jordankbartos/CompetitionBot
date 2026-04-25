@@ -262,7 +262,7 @@ resource "aws_lambda_function" "poker_worker" {
   handler          = "slack_bot.lambda_handler"
   runtime          = "python3.11"
   source_code_hash = filebase64sha256("build/worker.zip")
-  timeout          = 60 # increased for image processing
+  timeout          = 300 # AI news digest (search + generation) can take 30-60s on top of poll
 
   environment {
     variables = {
