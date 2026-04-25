@@ -1,0 +1,20 @@
+[tool.black]
+line-length = 100
+target-version = ['py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E: Error, F: Pyflakes, I: Isort
+select = ["E", "F", "I"]
+# D: Docstrings (can be annoying), ANN: Type annotations (already adding them)
+# We stay with basic sane defaults
+ignore = ["E501"] # Ignore line length in linting, let black handle formatting or just allow it for strings
+
+[tool.ruff.lint.per-file-ignores]
+"dev/local_bridge.py" = ["E402"] # Imports not at top due to sys.path hack
+
+[tool.ruff.lint.isort]
+known-first-party = ["poker_worker", "poker_handler", "domain", "database", "utils", "settlement", "vision"]

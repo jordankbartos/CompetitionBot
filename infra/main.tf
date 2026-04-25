@@ -13,12 +13,20 @@ data "aws_secretsmanager_secret_version" "slack_bot_token" {
   secret_id = data.aws_secretsmanager_secret.slack_bot_token.id
 }
 
-data "aws_secretsmanager_secret" "OPENAI_API_KEY" {
-  name = "OPENAI_API_KEY"
+data "aws_secretsmanager_secret" "slack_signing_secret" {
+  name = "slack_signing_secret"
 }
 
-data "aws_secretsmanager_secret_version" "OPENAI_API_KEY" {
-  secret_id = data.aws_secretsmanager_secret.OPENAI_API_KEY.id
+data "aws_secretsmanager_secret_version" "slack_signing_secret" {
+  secret_id = data.aws_secretsmanager_secret.slack_signing_secret.id
+}
+
+data "aws_secretsmanager_secret" "GOOGLE_API_KEY" {
+  name = "GOOGLE_API_KEY"
+}
+
+data "aws_secretsmanager_secret_version" "GOOGLE_API_KEY" {
+  secret_id = data.aws_secretsmanager_secret.GOOGLE_API_KEY.id
 }
 
 ################## VPC ######################################
@@ -174,7 +182,7 @@ resource "aws_iam_role_policy_attachment" "worker_lambda_policy" {
 
 
 resource "aws_iam_policy" "lambda_dynamodb_access_policy" {
-  name = "lambda_dynamodb_access_policy"
+  name = "lambda_poker_dynamodb_access_policy"
 
   policy = jsonencode({
     Version = "2012-10-17",
@@ -184,10 +192,12 @@ resource "aws_iam_policy" "lambda_dynamodb_access_policy" {
         Action = [
           "dynamodb:PutItem",
           "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
           "dynamodb:Query",
           "dynamodb:Scan"
         ]
-        Resource = "arn:aws:dynamodb:us-east-1:${data.aws_caller_identity.current.account_id}:table/${aws_dynamodb_table.advice_table.name}"
+        Resource = "arn:aws:dynamodb:us-east-1:${data.aws_caller_identity.current.account_id}:table/${aws_dynamodb_table.poker_table.name}"
       }
     ]
   })
@@ -201,74 +211,87 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb_policy_attachment" {
 
 ############# EventBridge Rule ##############################
 resource "aws_cloudwatch_event_rule" "eb_trigger" {
-  name                = "eb-worker_slackbot-trigger"
-  description         = "Trigger the worker_slackbot lambda"
-  schedule_expression = "cron(0 2 ? * 1 *)"
+  name                = "eb-poker_bot-trigger"
+  description         = "Trigger the weekly poker poll"
+  schedule_expression = "cron(0 12 ? * SUN *)"
   state               = "ENABLED"
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
-  statement_id  = "eb-worker_slackbot-trigger-permission"
+  statement_id  = "eb-poker_bot-trigger-permission"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.worker_slackbot.function_name
+  function_name = aws_lambda_function.poker_worker.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.eb_trigger.arn
 }
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.eb_trigger.name
-  target_id = "worker_slackbot_lambda"
-  arn       = aws_lambda_function.worker_slackbot.arn
+  target_id = "poker_worker_lambda"
+  arn       = aws_lambda_function.poker_worker.arn
 }
 
 ########################### DYNAMODB #########################
-resource "aws_dynamodb_table" "advice_table" {
-  name         = "slackbot_advice"
+resource "aws_dynamodb_table" "poker_table" {
+  name         = "poker_bot_data"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "advice_id"
+  hash_key     = "PK"
+  range_key    = "SK"
 
   attribute {
-    name = "advice_id"
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
     type = "S"
   }
 
   tags = {
     Environment = "production"
-    Purpose     = "Store advice history for slackbot"
+    Purpose     = "Store user mappings and polls and game history for PokerBot"
   }
 }
 
 ########################## LAMBDA ############################
-resource "aws_lambda_function" "worker_slackbot" {
+resource "aws_lambda_function" "poker_worker" {
   filename         = "build/worker.zip"
-  function_name    = "worker_slackbot"
+  function_name    = "poker_worker"
   role             = aws_iam_role.worker_lambda_exec.arn
   handler          = "slack_bot.lambda_handler"
   runtime          = "python3.11"
   source_code_hash = filebase64sha256("build/worker.zip")
-  timeout          = 30 # seconds
+  timeout          = 300 # AI news digest (search + generation) can take 30-60s on top of poll
 
   environment {
     variables = {
-      SLACK_BOT_TOKEN = data.aws_secretsmanager_secret_version.slack_bot_token.secret_string
-      OPENAI_API_KEY  = data.aws_secretsmanager_secret_version.OPENAI_API_KEY.secret_string
-      AWS_ACCOUNT_ID  = data.aws_caller_identity.current.account_id
-      LOG_LEVEL       = "INFO"
-      DYNAMODB_TABLE  = aws_dynamodb_table.advice_table.name
-      # AWS_REGION      = "us-east-1"
+      SLACK_BOT_TOKEN      = data.aws_secretsmanager_secret_version.slack_bot_token.secret_string
+      SLACK_SIGNING_SECRET = data.aws_secretsmanager_secret_version.slack_signing_secret.secret_string
+      GOOGLE_API_KEY       = data.aws_secretsmanager_secret_version.GOOGLE_API_KEY.secret_string
+      AWS_ACCOUNT_ID       = data.aws_caller_identity.current.account_id
+      LOG_LEVEL            = "INFO"
+      DYNAMODB_TABLE       = aws_dynamodb_table.poker_table.name
+      POKER_CHANNEL        = "pokerrrr"
     }
   }
 }
 
-resource "aws_lambda_function" "handler_slackbot" {
+resource "aws_lambda_function" "poker_handler" {
   filename         = "build/handler.zip"
-  function_name    = "handler_slackbot"
-  role             = aws_iam_role.worker_lambda_exec.arn # TODO RESTRICT THIS
+  function_name    = "poker_handler"
+  role             = aws_iam_role.worker_lambda_exec.arn
   handler          = "request.request_handler"
   runtime          = "python3.11"
   source_code_hash = filebase64sha256("build/handler.zip")
   timeout          = 5 # seconds
 
+  environment {
+    variables = {
+      WORKER_FUNCTION_NAME = aws_lambda_function.poker_worker.function_name
+      SLACK_SIGNING_SECRET = data.aws_secretsmanager_secret_version.slack_signing_secret.secret_string
+    }
+  }
 }
 
 ################# API Gateway ###########################
@@ -292,7 +315,7 @@ resource "aws_api_gateway_method" "lambda_method" {
 resource "aws_lambda_permission" "apigw" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.handler_slackbot.function_name
+  function_name = aws_lambda_function.poker_handler.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.slackbot_api.execution_arn}/*/*"
 }
@@ -303,7 +326,7 @@ resource "aws_api_gateway_integration" "lambda_integration" {
   http_method             = aws_api_gateway_method.lambda_method.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.handler_slackbot.invoke_arn
+  uri                     = aws_lambda_function.poker_handler.invoke_arn
 }
 
 resource "aws_api_gateway_deployment" "handler_slackbot_deployment" {
@@ -311,4 +334,3 @@ resource "aws_api_gateway_deployment" "handler_slackbot_deployment" {
   rest_api_id = aws_api_gateway_rest_api.slackbot_api.id
   stage_name  = "prod"
 }
-

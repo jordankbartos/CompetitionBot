@@ -1,0 +1,33 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm -rf awscliv2.zip ./aws
+
+# Copy requirements and install
+COPY requirements-dev.txt .
+COPY poker_worker/requirements.txt ./poker_worker/
+COPY poker_handler/requirements.txt ./poker_handler/
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+# Copy the rest of the code
+COPY . .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=dev/local_bridge.py
+
+# Expose the Flask port
+EXPOSE 5000
+
+CMD ["python", "dev/local_bridge.py"]
